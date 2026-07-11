@@ -4,6 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.mindbridge.agent.config.MindBridgeProperties;
+import com.mindbridge.agent.service.agent.AgentAction;
+import com.mindbridge.agent.service.agent.AgentContext;
+import com.mindbridge.agent.service.agent.AgentDecision;
+import com.mindbridge.agent.service.agent.AgentName;
 import com.mindbridge.agent.service.agent.MindBridgeAgent;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -75,12 +79,19 @@ class AgentRuntimeFactoryTest {
     }
 
     @Test
-    void factoryShouldRejectGraphModeAsNotImplemented() {
+    void factoryShouldReturnGraphForGraphMode() {
+        var factory = new AgentRuntimeFactory(sixStubAgents(), props("GRAPH"));
+        AgentRuntime runtime = factory.runtime();
+        assertThat(runtime).isInstanceOf(GraphAgentRuntime.class);
+        assertThat(runtime.mode()).isEqualTo(RuntimeMode.GRAPH);
+    }
+
+    @Test
+    void factoryShouldFailGraphModeWithoutRequiredAgents() {
         var factory = new AgentRuntimeFactory(emptyAgents(), props("GRAPH"));
         assertThatThrownBy(factory::runtime)
-                .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessageContaining("GRAPH")
-                .hasMessageContaining("not yet implemented");
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Required agent not found");
     }
 
     @Test
@@ -100,10 +111,10 @@ class AgentRuntimeFactoryTest {
     }
 
     @Test
-    void factoryRuntimeByModeShouldRejectGraph() {
-        var factory = new AgentRuntimeFactory(emptyAgents(), new MindBridgeProperties());
-        assertThatThrownBy(() -> factory.runtime(RuntimeMode.GRAPH))
-                .isInstanceOf(UnsupportedOperationException.class);
+    void factoryRuntimeByModeShouldReturnGraph() {
+        var factory = new AgentRuntimeFactory(sixStubAgents(), new MindBridgeProperties());
+        AgentRuntime runtime = factory.runtime(RuntimeMode.GRAPH);
+        assertThat(runtime).isInstanceOf(GraphAgentRuntime.class);
     }
 
     @Test
@@ -111,5 +122,28 @@ class AgentRuntimeFactoryTest {
         var factory = new AgentRuntimeFactory(emptyAgents(), new MindBridgeProperties());
         assertThatThrownBy(() -> factory.runtime(RuntimeMode.EVENT_DRIVEN))
                 .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    private List<MindBridgeAgent> sixStubAgents() {
+        return List.of(
+                stubAgent(AgentName.MEMORY_AGENT),
+                stubAgent(AgentName.SUPERVISOR_AGENT),
+                stubAgent(AgentName.KNOWLEDGE_AGENT),
+                stubAgent(AgentName.RISK_GUARDIAN_AGENT),
+                stubAgent(AgentName.COMPANION_AGENT),
+                stubAgent(AgentName.COUNSELOR_AGENT));
+    }
+
+    private static MindBridgeAgent stubAgent(AgentName name) {
+        return new MindBridgeAgent() {
+            @Override
+            public AgentName name() { return name; }
+            @Override
+            public boolean supports(AgentContext ctx) { return false; }
+            @Override
+            public AgentDecision act(AgentContext ctx) {
+                return AgentDecision.continueWith(AgentAction.READ_MEMORY, "stub");
+            }
+        };
     }
 }

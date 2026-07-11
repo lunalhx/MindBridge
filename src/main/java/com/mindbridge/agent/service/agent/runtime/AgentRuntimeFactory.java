@@ -33,12 +33,10 @@ public class AgentRuntimeFactory {
         RuntimeMode mode = resolveMode();
         return switch (mode) {
             case SEQUENTIAL -> new SequentialAgentRuntime(agents);
-            case GRAPH -> throw new UnsupportedOperationException(
-                    "Runtime mode GRAPH is not yet implemented. "
-                            + "Please use SEQUENTIAL for now.");
+            case GRAPH -> GraphAgentRuntime.fromAgents(agents);
             case EVENT_DRIVEN -> throw new UnsupportedOperationException(
                     "Runtime mode EVENT_DRIVEN is not yet implemented. "
-                            + "Please use SEQUENTIAL for now.");
+                            + "Please use SEQUENTIAL or GRAPH for now.");
         };
     }
 
@@ -48,8 +46,7 @@ public class AgentRuntimeFactory {
     public AgentRuntime runtime(RuntimeMode mode) {
         return switch (mode) {
             case SEQUENTIAL -> new SequentialAgentRuntime(agents);
-            case GRAPH -> throw new UnsupportedOperationException(
-                    "Runtime mode GRAPH is not yet implemented.");
+            case GRAPH -> GraphAgentRuntime.fromAgents(agents);
             case EVENT_DRIVEN -> throw new UnsupportedOperationException(
                     "Runtime mode EVENT_DRIVEN is not yet implemented.");
         };
