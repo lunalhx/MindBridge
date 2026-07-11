@@ -20,6 +20,7 @@ public class MindBridgeProperties {
     private final Knowledge knowledge = new Knowledge();
     private final RagEval ragEval = new RagEval();
     private final Mcp mcp = new Mcp();
+    private final Agent agent = new Agent();
 
     public Ai getAi() {
         return ai;
@@ -47,6 +48,33 @@ public class MindBridgeProperties {
 
     public Mcp getMcp() {
         return mcp;
+    }
+
+    public Agent getAgent() {
+        return agent;
+    }
+
+    public static class Agent {
+        /** 声明式调度候选置信度阈值，低于此值的 Agent 不参与竞争。 */
+        private double decisionThreshold = 0.6;
+        /** Agent 运行时模式：SEQUENTIAL、GRAPH 或 EVENT_DRIVEN。默认 SEQUENTIAL。 */
+        private String runtimeMode = "SEQUENTIAL";
+
+        public double getDecisionThreshold() {
+            return decisionThreshold;
+        }
+
+        public void setDecisionThreshold(double decisionThreshold) {
+            this.decisionThreshold = decisionThreshold;
+        }
+
+        public String getRuntimeMode() {
+            return runtimeMode;
+        }
+
+        public void setRuntimeMode(String runtimeMode) {
+            this.runtimeMode = runtimeMode;
+        }
     }
 
     public static class Ai {

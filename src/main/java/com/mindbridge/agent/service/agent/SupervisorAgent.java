@@ -2,6 +2,10 @@ package com.mindbridge.agent.service.agent;
 
 import com.mindbridge.agent.domain.IntentType;
 import com.mindbridge.agent.service.IntentClassifier;
+import com.mindbridge.agent.service.agent.blackboard.AgentBlackboard;
+import com.mindbridge.agent.service.agent.blackboard.AgentFlag;
+import com.mindbridge.agent.service.agent.registry.AgentCapability;
+import java.util.List;
 import org.springframework.stereotype.Component;
 
 /**
@@ -26,6 +30,16 @@ public class SupervisorAgent implements MindBridgeAgent {
     @Override
     public boolean supports(AgentContext context) {
         return context.memoryLoaded() && !context.intentRouted();
+    }
+
+    @Override
+    public List<AgentCapability> decide(AgentBlackboard blackboard) {
+        if (!blackboard.hasFlag(AgentFlag.MEMORY_LOADED) || blackboard.hasFlag(AgentFlag.INTENT_ROUTED)) {
+            return List.of();
+        }
+        return List.of(new AgentCapability(
+                "route-intent", 1.0, "intent",
+                List.of("memory")));
     }
 
     @Override

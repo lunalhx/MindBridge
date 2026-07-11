@@ -4,6 +4,11 @@ import com.mindbridge.agent.domain.IntentType;
 import com.mindbridge.agent.domain.RiskLevel;
 import com.mindbridge.agent.service.PsychologicalAssessmentService;
 import com.mindbridge.agent.service.PsychologyAssessment;
+import com.mindbridge.agent.service.agent.blackboard.AgentArtifact;
+import com.mindbridge.agent.service.agent.blackboard.AgentBlackboard;
+import com.mindbridge.agent.service.agent.blackboard.AgentFlag;
+import com.mindbridge.agent.service.agent.registry.AgentCapability;
+import java.util.List;
 import org.springframework.stereotype.Component;
 
 /**
@@ -30,6 +35,23 @@ public class RiskGuardianAgent implements MindBridgeAgent {
         return context.knowledgeHandled()
                 && !context.riskAssessed()
                 && context.intent() != IntentType.CHAT;
+    }
+
+    @Override
+    public List<AgentCapability> decide(AgentBlackboard blackboard) {
+        if (!blackboard.hasFlag(AgentFlag.KNOWLEDGE_HANDLED) || blackboard.hasFlag(AgentFlag.RISK_ASSESSED)) {
+            return List.of();
+        }
+        IntentType intent = blackboard.getArtifact(AgentArtifact.NAME_INTENT)
+                .filter(a -> a.payload() instanceof IntentType)
+                .map(a -> (IntentType) a.payload())
+                .orElse(null);
+        if (intent == IntentType.CHAT) {
+            return List.of();
+        }
+        return List.of(new AgentCapability(
+                "assess-risk", 0.95, "assessment",
+                List.of("intent", "knowledge")));
     }
 
     @Override

@@ -4,6 +4,10 @@ import com.mindbridge.agent.config.MindBridgeProperties;
 import com.mindbridge.agent.domain.IntentType;
 import com.mindbridge.agent.service.ai.AiClient;
 import com.mindbridge.agent.service.ai.AiMessage;
+import com.mindbridge.agent.service.agent.blackboard.AgentArtifact;
+import com.mindbridge.agent.service.agent.blackboard.AgentBlackboard;
+import com.mindbridge.agent.service.agent.blackboard.AgentFlag;
+import com.mindbridge.agent.service.agent.registry.AgentCapability;
 import com.mindbridge.agent.service.knowledge.KnowledgeService;
 import com.mindbridge.agent.service.knowledge.SearchResult;
 import java.util.List;
@@ -37,6 +41,23 @@ public class KnowledgeAgent implements MindBridgeAgent {
         return context.intentRouted()
                 && !context.knowledgeHandled()
                 && context.intent() != IntentType.CHAT;
+    }
+
+    @Override
+    public List<AgentCapability> decide(AgentBlackboard blackboard) {
+        if (!blackboard.hasFlag(AgentFlag.INTENT_ROUTED) || blackboard.hasFlag(AgentFlag.KNOWLEDGE_HANDLED)) {
+            return List.of();
+        }
+        IntentType intent = blackboard.getArtifact(AgentArtifact.NAME_INTENT)
+                .filter(a -> a.payload() instanceof IntentType)
+                .map(a -> (IntentType) a.payload())
+                .orElse(null);
+        if (intent == IntentType.CHAT) {
+            return List.of();
+        }
+        return List.of(new AgentCapability(
+                "retrieve-knowledge", 0.9, "knowledge",
+                List.of("intent")));
     }
 
     @Override

@@ -5,6 +5,10 @@ import com.mindbridge.agent.domain.RiskLevel;
 import com.mindbridge.agent.service.ai.AiClient;
 import com.mindbridge.agent.service.ai.AiMessage;
 import com.mindbridge.agent.service.ai.PromptTemplates;
+import com.mindbridge.agent.service.agent.blackboard.AgentArtifact;
+import com.mindbridge.agent.service.agent.blackboard.AgentBlackboard;
+import com.mindbridge.agent.service.agent.blackboard.AgentFlag;
+import com.mindbridge.agent.service.agent.registry.AgentCapability;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.stereotype.Component;
@@ -33,6 +37,26 @@ public class CompanionAgent implements MindBridgeAgent {
         return context.intentRouted()
                 && context.intent() == IntentType.CHAT
                 && !context.responsePlanned();
+    }
+
+    @Override
+    public List<AgentCapability> decide(AgentBlackboard blackboard) {
+        if (blackboard.hasFlag(AgentFlag.RESPONSE_PLANNED)) {
+            return List.of();
+        }
+        if (!blackboard.hasFlag(AgentFlag.INTENT_ROUTED)) {
+            return List.of();
+        }
+        IntentType intent = blackboard.getArtifact(AgentArtifact.NAME_INTENT)
+                .filter(a -> a.payload() instanceof IntentType)
+                .map(a -> (IntentType) a.payload())
+                .orElse(null);
+        if (intent != IntentType.CHAT) {
+            return List.of();
+        }
+        return List.of(new AgentCapability(
+                "plan-companion-response", 0.9, "response",
+                List.of("intent")));
     }
 
     @Override

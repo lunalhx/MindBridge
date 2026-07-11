@@ -7,6 +7,9 @@ import com.mindbridge.agent.repository.ChatMessageRepository;
 import com.mindbridge.agent.service.PrivacySanitizer;
 import com.mindbridge.agent.service.ai.AiClient;
 import com.mindbridge.agent.service.ai.AiMessage;
+import com.mindbridge.agent.service.agent.blackboard.AgentBlackboard;
+import com.mindbridge.agent.service.agent.blackboard.AgentFlag;
+import com.mindbridge.agent.service.agent.registry.AgentCapability;
 import com.mindbridge.agent.service.memory.ShortTermMemoryService;
 import com.mindbridge.agent.service.memory.ShortTermMemoryService.MemoryMessage;
 import com.mindbridge.agent.service.memory.UserProfileMemoryService;
@@ -54,6 +57,16 @@ public class MemoryAgent implements MindBridgeAgent {
     @Override
     public boolean supports(AgentContext context) {
         return !context.memoryLoaded();
+    }
+
+    @Override
+    public List<AgentCapability> decide(AgentBlackboard blackboard) {
+        if (blackboard.hasFlag(AgentFlag.MEMORY_LOADED)) {
+            return List.of();
+        }
+        return List.of(new AgentCapability(
+                "load-memory", 1.0, "memory",
+                List.of()));
     }
 
     @Override
