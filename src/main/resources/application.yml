@@ -89,6 +89,10 @@ mindbridge:
   agent:
     runtime-mode: ${AGENT_RUNTIME_MODE:SEQUENTIAL}
     decision-threshold: ${AGENT_DECISION_THRESHOLD:0.6}
+    max-rounds: ${AGENT_MAX_ROUNDS:8}
+    max-revisions: ${AGENT_MAX_REVISIONS:2}
+  agent-models:
+    overrides: {}
   ai:
     provider: ${AI_PROVIDER:ollama}
     temperature: ${AI_TEMPERATURE:0.35}

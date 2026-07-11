@@ -20,6 +20,8 @@ import com.mindbridge.agent.service.ai.PromptTemplates;
 import com.mindbridge.agent.service.knowledge.SearchResult;
 import com.mindbridge.agent.service.agent.AgentRunResult;
 import com.mindbridge.agent.service.agent.AgentRuntimeService;
+import com.mindbridge.agent.service.agent.AgentName;
+import com.mindbridge.agent.service.ai.AgentModelRegistry;
 import com.mindbridge.agent.service.memory.ShortTermMemoryService;
 import com.mindbridge.agent.service.memory.UserProfileMemoryService;
 import java.time.Duration;
@@ -58,6 +60,7 @@ public class ChatService {
     private final AgentRuntimeService agentRuntimeService;
     private final AgentRunTraceService agentRunTraceService;
     private final AiClient aiClient;
+    private final AgentModelRegistry agentModelRegistry;
 
     public ChatService(
             UserAccountRepository userAccountRepository,
@@ -71,7 +74,8 @@ public class ChatService {
             UserProfileMemoryService userProfileMemoryService,
             AgentRuntimeService agentRuntimeService,
             AgentRunTraceService agentRunTraceService,
-            AiClient aiClient
+            AiClient aiClient,
+            AgentModelRegistry agentModelRegistry
     ) {
         this.userAccountRepository = userAccountRepository;
         this.chatSessionRepository = chatSessionRepository;
@@ -85,6 +89,7 @@ public class ChatService {
         this.agentRuntimeService = agentRuntimeService;
         this.agentRunTraceService = agentRunTraceService;
         this.aiClient = aiClient;
+        this.agentModelRegistry = agentModelRegistry;
     }
 
     public Flux<ServerSentEvent<ChatStreamEvent>> streamChat(Long userId, ChatRequest request) {
@@ -120,7 +125,8 @@ public class ChatService {
                 ? buildMessages(user, agentRun.intent(), riskLevel, agentRun.retrievedKnowledge(), agentRun.modelHistory())
                 : agentRun.responseMessages();
         Long reportId = report == null ? null : report.getId();
-        return new PreparedConversation(user, session, agentRun.intent(), riskLevel, messages, reportId);
+        AiClient responseAiClient = selectResponseClient(agentRun.responseAgent());
+        return new PreparedConversation(user, session, agentRun.intent(), riskLevel, messages, reportId, responseAiClient);
     }
 
     private Flux<ServerSentEvent<ChatStreamEvent>> streamPrepared(PreparedConversation prepared) {
@@ -129,7 +135,7 @@ public class ChatService {
                 "meta",
                 ChatStreamEvent.meta(prepared.session().getPublicId())));
 
-        Flux<ServerSentEvent<ChatStreamEvent>> tokens = aiClient.stream(prepared.messages())
+        Flux<ServerSentEvent<ChatStreamEvent>> tokens = prepared.aiClient().stream(prepared.messages())
                 .doOnNext(assistantReply::append)
                 .map(token -> event("token", ChatStreamEvent.token(prepared.session().getPublicId(), token)))
                 .timeout(Duration.ofSeconds(45))
@@ -207,6 +213,20 @@ public class ChatService {
         return reportRepository.save(report);
     }
 
+    /**
+     * 选择负责回复的 Agent 对应的 AiClient。
+     *
+     * <p>如果 AgentModelRegistry 有该 Agent 的 override，使用其专属客户端；
+     * 否则回退到默认 AiClient。</p>
+     */
+    private AiClient selectResponseClient(AgentName responseAgent) {
+        if (responseAgent != null && agentModelRegistry != null
+                && agentModelRegistry.hasOverride(responseAgent)) {
+            return agentModelRegistry.clientFor(responseAgent);
+        }
+        return aiClient;
+    }
+
     private List<AiMessage> buildMessages(
             UserAccount user,
             IntentType intent,
@@ -243,7 +263,8 @@ public class ChatService {
             IntentType intent,
             RiskLevel riskLevel,
             List<AiMessage> messages,
-            Long reportId
+            Long reportId,
+            AiClient aiClient
     ) {
     }
 }

@@ -1,7 +1,9 @@
 package com.mindbridge.agent.config;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "mindbridge")
@@ -21,6 +23,7 @@ public class MindBridgeProperties {
     private final RagEval ragEval = new RagEval();
     private final Mcp mcp = new Mcp();
     private final Agent agent = new Agent();
+    private final AgentModels agentModels = new AgentModels();
 
     public Ai getAi() {
         return ai;
@@ -52,6 +55,10 @@ public class MindBridgeProperties {
 
     public Agent getAgent() {
         return agent;
+    }
+
+    public AgentModels getAgentModels() {
+        return agentModels;
     }
 
     public static class Agent {
@@ -95,6 +102,35 @@ public class MindBridgeProperties {
         public void setMaxRevisions(int maxRevisions) {
             this.maxRevisions = maxRevisions;
         }
+    }
+
+    public static class AgentModels {
+        /** Per-Agent 模型 override 配置，key 为 Agent 名称（如 risk-guardian、counselor）。 */
+        private Map<String, AgentModelProfileConfig> overrides = new LinkedHashMap<>();
+
+        public Map<String, AgentModelProfileConfig> getOverrides() {
+            return overrides;
+        }
+
+        public void setOverrides(Map<String, AgentModelProfileConfig> overrides) {
+            this.overrides = overrides;
+        }
+    }
+
+    public static class AgentModelProfileConfig {
+        private String provider;
+        private String model;
+        private Double temperature;
+        private Integer maxTokens;
+
+        public String getProvider() { return provider; }
+        public void setProvider(String provider) { this.provider = provider; }
+        public String getModel() { return model; }
+        public void setModel(String model) { this.model = model; }
+        public Double getTemperature() { return temperature; }
+        public void setTemperature(Double temperature) { this.temperature = temperature; }
+        public Integer getMaxTokens() { return maxTokens; }
+        public void setMaxTokens(Integer maxTokens) { this.maxTokens = maxTokens; }
     }
 
     public static class Ai {
