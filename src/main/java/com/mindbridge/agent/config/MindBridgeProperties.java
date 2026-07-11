@@ -201,6 +201,12 @@ public class MindBridgeProperties {
         private int historyLimit = 10;
         /** Redis 短期记忆 TTL，过期后可从 MySQL 长期记忆恢复最近上下文。 */
         private long shortMemoryTtlHours = 24;
+        /** Per-Agent 私有记忆 TTL（小时），默认对齐短期记忆 TTL。 */
+        private long privateMemoryTtlHours = 24;
+        /** Per-Agent 私有记忆压缩阈值，消息数超过此值后触发 compact。 */
+        private int privateMemoryCompactThreshold = 10;
+        /** Per-Agent 私有记忆 compact 后保留的最近消息条数。 */
+        private int privateMemoryKeepRecent = 4;
 
         public int getHistoryLimit() {
             return historyLimit;
@@ -216,6 +222,30 @@ public class MindBridgeProperties {
 
         public void setShortMemoryTtlHours(long shortMemoryTtlHours) {
             this.shortMemoryTtlHours = shortMemoryTtlHours;
+        }
+
+        public long getPrivateMemoryTtlHours() {
+            return privateMemoryTtlHours;
+        }
+
+        public void setPrivateMemoryTtlHours(long privateMemoryTtlHours) {
+            this.privateMemoryTtlHours = privateMemoryTtlHours;
+        }
+
+        public int getPrivateMemoryCompactThreshold() {
+            return privateMemoryCompactThreshold;
+        }
+
+        public void setPrivateMemoryCompactThreshold(int privateMemoryCompactThreshold) {
+            this.privateMemoryCompactThreshold = privateMemoryCompactThreshold;
+        }
+
+        public int getPrivateMemoryKeepRecent() {
+            return privateMemoryKeepRecent;
+        }
+
+        public void setPrivateMemoryKeepRecent(int privateMemoryKeepRecent) {
+            this.privateMemoryKeepRecent = privateMemoryKeepRecent;
         }
     }
 
