@@ -1,0 +1,45 @@
+# Build output
+target/
+dist/
+*.class
+*.jar
+*.war
+*.nar
+*.ear
+
+# Maven
+.m2/
+.tools/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+.settings/
+.classpath
+.project
+
+# Data & runtime
+data/
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Archives
+*.tar
+*.tar.gz
+*.zip
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Temp
+*.tmp
+*.bak
+*.swp
+*~
