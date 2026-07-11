@@ -86,6 +86,9 @@ management:
         include: health,info
 
 mindbridge:
+  agent:
+    runtime-mode: ${AGENT_RUNTIME_MODE:SEQUENTIAL}
+    decision-threshold: ${AGENT_DECISION_THRESHOLD:0.6}
   ai:
     provider: ${AI_PROVIDER:ollama}
     temperature: ${AI_TEMPERATURE:0.35}
