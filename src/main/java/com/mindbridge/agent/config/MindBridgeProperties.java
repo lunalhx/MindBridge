@@ -59,6 +59,10 @@ public class MindBridgeProperties {
         private double decisionThreshold = 0.6;
         /** Agent 运行时模式：SEQUENTIAL、GRAPH 或 EVENT_DRIVEN。默认 SEQUENTIAL。 */
         private String runtimeMode = "SEQUENTIAL";
+        /** EVENT_DRIVEN 模式最大协调轮次。 */
+        private int maxRounds = 8;
+        /** EVENT_DRIVEN 模式最大 revision 次数（安全检查不通过后的修正上限）。 */
+        private int maxRevisions = 2;
 
         public double getDecisionThreshold() {
             return decisionThreshold;
@@ -74,6 +78,22 @@ public class MindBridgeProperties {
 
         public void setRuntimeMode(String runtimeMode) {
             this.runtimeMode = runtimeMode;
+        }
+
+        public int getMaxRounds() {
+            return maxRounds;
+        }
+
+        public void setMaxRounds(int maxRounds) {
+            this.maxRounds = maxRounds;
+        }
+
+        public int getMaxRevisions() {
+            return maxRevisions;
+        }
+
+        public void setMaxRevisions(int maxRevisions) {
+            this.maxRevisions = maxRevisions;
         }
     }
 

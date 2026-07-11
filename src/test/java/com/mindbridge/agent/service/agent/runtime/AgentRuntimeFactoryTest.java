@@ -95,12 +95,11 @@ class AgentRuntimeFactoryTest {
     }
 
     @Test
-    void factoryShouldRejectEventDrivenModeAsNotImplemented() {
-        var factory = new AgentRuntimeFactory(emptyAgents(), props("EVENT_DRIVEN"));
-        assertThatThrownBy(factory::runtime)
-                .isInstanceOf(UnsupportedOperationException.class)
-                .hasMessageContaining("EVENT_DRIVEN")
-                .hasMessageContaining("not yet implemented");
+    void factoryShouldReturnEventDrivenForEventDrivenMode() {
+        var factory = new AgentRuntimeFactory(sixStubAgents(), props("EVENT_DRIVEN"));
+        AgentRuntime runtime = factory.runtime();
+        assertThat(runtime).isInstanceOf(EventDrivenAgentRuntime.class);
+        assertThat(runtime.mode()).isEqualTo(RuntimeMode.EVENT_DRIVEN);
     }
 
     @Test
@@ -118,10 +117,10 @@ class AgentRuntimeFactoryTest {
     }
 
     @Test
-    void factoryRuntimeByModeShouldRejectEventDriven() {
-        var factory = new AgentRuntimeFactory(emptyAgents(), new MindBridgeProperties());
-        assertThatThrownBy(() -> factory.runtime(RuntimeMode.EVENT_DRIVEN))
-                .isInstanceOf(UnsupportedOperationException.class);
+    void factoryRuntimeByModeShouldReturnEventDriven() {
+        var factory = new AgentRuntimeFactory(sixStubAgents(), new MindBridgeProperties());
+        AgentRuntime runtime = factory.runtime(RuntimeMode.EVENT_DRIVEN);
+        assertThat(runtime).isInstanceOf(EventDrivenAgentRuntime.class);
     }
 
     private List<MindBridgeAgent> sixStubAgents() {

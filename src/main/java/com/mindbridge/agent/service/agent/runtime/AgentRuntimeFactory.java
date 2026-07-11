@@ -2,6 +2,7 @@ package com.mindbridge.agent.service.agent.runtime;
 
 import com.mindbridge.agent.config.MindBridgeProperties;
 import com.mindbridge.agent.service.agent.MindBridgeAgent;
+import com.mindbridge.agent.service.agent.registry.AgentRegistry;
 import java.util.List;
 import org.springframework.stereotype.Service;
 
@@ -34,9 +35,10 @@ public class AgentRuntimeFactory {
         return switch (mode) {
             case SEQUENTIAL -> new SequentialAgentRuntime(agents);
             case GRAPH -> GraphAgentRuntime.fromAgents(agents);
-            case EVENT_DRIVEN -> throw new UnsupportedOperationException(
-                    "Runtime mode EVENT_DRIVEN is not yet implemented. "
-                            + "Please use SEQUENTIAL or GRAPH for now.");
+            case EVENT_DRIVEN -> new EventDrivenAgentRuntime(
+                    new AgentRegistry(agents, properties.getAgent().getDecisionThreshold()),
+                    properties.getAgent().getMaxRounds(),
+                    properties.getAgent().getMaxRevisions());
         };
     }
 
@@ -47,8 +49,10 @@ public class AgentRuntimeFactory {
         return switch (mode) {
             case SEQUENTIAL -> new SequentialAgentRuntime(agents);
             case GRAPH -> GraphAgentRuntime.fromAgents(agents);
-            case EVENT_DRIVEN -> throw new UnsupportedOperationException(
-                    "Runtime mode EVENT_DRIVEN is not yet implemented.");
+            case EVENT_DRIVEN -> new EventDrivenAgentRuntime(
+                    new AgentRegistry(agents, properties.getAgent().getDecisionThreshold()),
+                    properties.getAgent().getMaxRounds(),
+                    properties.getAgent().getMaxRevisions());
         };
     }
 
