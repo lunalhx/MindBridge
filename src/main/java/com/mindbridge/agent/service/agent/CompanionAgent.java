@@ -15,6 +15,8 @@ import java.util.ArrayList;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * 普通陪伴 Agent。
@@ -23,6 +25,8 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class CompanionAgent implements MindBridgeAgent {
+
+    private static final Logger log = LoggerFactory.getLogger(CompanionAgent.class);
 
     private final AiClient aiClient;
     private final SkillRegistry skillRegistry;
@@ -99,7 +103,8 @@ public class CompanionAgent implements MindBridgeAgent {
                             """.formatted(context.memoryBrief(), context.modelInput()))
             )).trim();
             return plan.isBlank() ? "围绕用户当前问题直接、自然地回答。" : shorten(plan, 300);
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            log.warn("[agent] CompanionAgent planResponse degraded: error={}", e.getClass().getSimpleName());
             return "围绕用户当前问题直接、自然地回答。";
         }
     }

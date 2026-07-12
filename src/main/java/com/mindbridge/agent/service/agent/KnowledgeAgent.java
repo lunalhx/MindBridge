@@ -12,6 +12,8 @@ import com.mindbridge.agent.service.knowledge.KnowledgeService;
 import com.mindbridge.agent.service.knowledge.SearchResult;
 import java.util.List;
 import org.springframework.stereotype.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * 知识库 Agent。
@@ -20,6 +22,8 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class KnowledgeAgent implements MindBridgeAgent {
+
+    private static final Logger log = LoggerFactory.getLogger(KnowledgeAgent.class);
 
     private final KnowledgeService knowledgeService;
     private final MindBridgeProperties properties;
@@ -102,7 +106,8 @@ public class KnowledgeAgent implements MindBridgeAgent {
                             """.formatted(context.memoryBrief(), context.modelInput()))
             )).trim();
             return normalizeQuery(query, context.modelInput());
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            log.warn("[agent] KnowledgeAgent rewriteQuery degraded: error={}", e.getClass().getSimpleName());
             return context.modelInput();
         }
     }
@@ -127,7 +132,8 @@ public class KnowledgeAgent implements MindBridgeAgent {
                             """.formatted(context.modelInput(), formatResults(results)))
             )).trim().toUpperCase();
             return decision.contains("SUFFICIENT") && !decision.contains("INSUFFICIENT");
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            log.warn("[agent] KnowledgeAgent isKnowledgeEnough degraded: error={}", e.getClass().getSimpleName());
             return true;
         }
     }
@@ -152,7 +158,8 @@ public class KnowledgeAgent implements MindBridgeAgent {
                             """.formatted(context.modelInput(), previousQuery, formatResults(results)))
             )).trim();
             return normalizeQuery(query, previousQuery);
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            log.warn("[agent] KnowledgeAgent refineQuery degraded: error={}", e.getClass().getSimpleName());
             return previousQuery;
         }
     }

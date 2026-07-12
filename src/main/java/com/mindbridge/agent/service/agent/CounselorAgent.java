@@ -14,6 +14,8 @@ import java.util.ArrayList;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * 心理支持 Agent。
@@ -22,6 +24,8 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class CounselorAgent implements MindBridgeAgent {
+
+    private static final Logger log = LoggerFactory.getLogger(CounselorAgent.class);
 
     private final AiClient aiClient;
     private final SkillRegistry skillRegistry;
@@ -111,7 +115,8 @@ public class CounselorAgent implements MindBridgeAgent {
                             formatKnowledge(context)))
             )).trim();
             return plan.isBlank() ? "先共情，再给出具体支持步骤；高风险时优先安全。" : shorten(plan, 500);
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            log.warn("[agent] CounselorAgent planResponse degraded: error={}", e.getClass().getSimpleName());
             return "先共情，再给出具体支持步骤；高风险时优先安全。";
         }
     }

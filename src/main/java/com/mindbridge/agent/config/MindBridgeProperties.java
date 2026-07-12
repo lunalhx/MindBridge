@@ -147,6 +147,7 @@ public class MindBridgeProperties {
         private int maxTokens = 512;
         private final Ollama ollama = new Ollama();
         private final OpenAi openai = new OpenAi();
+        private final Resilience resilience = new Resilience();
 
         public String getProvider() {
             return provider;
@@ -179,6 +180,38 @@ public class MindBridgeProperties {
         public OpenAi getOpenai() {
             return openai;
         }
+
+        public Resilience getResilience() {
+            return resilience;
+        }
+    }
+
+    public static class Resilience {
+        /** 是否启用 LLM 调用弹性（重试+断路器）。 */
+        private boolean enabled = true;
+        /** 最大尝试次数（含首次）。 */
+        private int maxAttempts = 3;
+        /** 初始退避间隔（毫秒）。 */
+        private long initialBackoffMs = 1000;
+        /** 最大退避间隔（毫秒），退避不超过此值。 */
+        private long maxBackoffMs = 30000;
+        /** 连续失败多少次后打开断路器。 */
+        private int failureThreshold = 5;
+        /** 断路器打开持续时间（毫秒），过后进入半开。 */
+        private long openDurationMs = 60000;
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public int getMaxAttempts() { return maxAttempts; }
+        public void setMaxAttempts(int maxAttempts) { this.maxAttempts = maxAttempts; }
+        public long getInitialBackoffMs() { return initialBackoffMs; }
+        public void setInitialBackoffMs(long initialBackoffMs) { this.initialBackoffMs = initialBackoffMs; }
+        public long getMaxBackoffMs() { return maxBackoffMs; }
+        public void setMaxBackoffMs(long maxBackoffMs) { this.maxBackoffMs = maxBackoffMs; }
+        public int getFailureThreshold() { return failureThreshold; }
+        public void setFailureThreshold(int failureThreshold) { this.failureThreshold = failureThreshold; }
+        public long getOpenDurationMs() { return openDurationMs; }
+        public void setOpenDurationMs(long openDurationMs) { this.openDurationMs = openDurationMs; }
     }
 
     public static class Ollama {

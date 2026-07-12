@@ -1,6 +1,7 @@
 package com.mindbridge.agent.config;
 
 import com.mindbridge.agent.service.ai.AiClient;
+import com.mindbridge.agent.service.ai.ResilientAiClient;
 import com.mindbridge.agent.service.ai.SpringAiChatClient;
 import org.springframework.ai.ollama.OllamaChatModel;
 import org.springframework.ai.ollama.api.OllamaApi;
@@ -16,12 +17,32 @@ import org.springframework.context.annotation.Configuration;
  *
  * <p>根据 application.yml 或环境变量选择本地项目模型或 OpenAI 客户端，
  * 让业务服务只依赖统一的 {@link AiClient} 接口。</p>
+ *
+ * <p>批次 11 后，默认 AiClient Bean 使用 {@link ResilientAiClient} 包装底层客户端，
+ * 提供重试和断路器弹性能力。resilience.enabled=false 时透传原始客户端。</p>
  */
 @Configuration
 public class AiClientConfig {
 
     @Bean
     public AiClient aiClient(MindBridgeProperties properties) {
+        AiClient rawClient = createRawClient(properties);
+        var resilience = properties.getAi().getResilience();
+        if (!resilience.isEnabled()) {
+            return rawClient;
+        }
+        var config = new ResilientAiClient.ResilienceConfig(
+                true,
+                Math.max(1, resilience.getMaxAttempts()),
+                resilience.getInitialBackoffMs(),
+                resilience.getMaxBackoffMs(),
+                Math.max(1, resilience.getFailureThreshold()),
+                resilience.getOpenDurationMs()
+        );
+        return new ResilientAiClient(rawClient, config);
+    }
+
+    private AiClient createRawClient(MindBridgeProperties properties) {
         String provider = properties.getAi().getProvider().toLowerCase();
         if ("ollama".equals(provider)) {
             OllamaChatModel model = ollamaChatModel(properties);

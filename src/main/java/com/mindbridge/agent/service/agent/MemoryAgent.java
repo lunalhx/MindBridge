@@ -20,6 +20,8 @@ import java.util.Collections;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * 记忆 Agent。
@@ -28,6 +30,8 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class MemoryAgent implements MindBridgeAgent {
+
+    private static final Logger log = LoggerFactory.getLogger(MemoryAgent.class);
 
     private final ChatMessageRepository chatMessageRepository;
     private final ShortTermMemoryService shortTermMemoryService;
@@ -166,7 +170,8 @@ public class MemoryAgent implements MindBridgeAgent {
                             """.formatted(currentInput, formatHistory(history)))
             )).trim();
             return summary.isBlank() ? "无相关历史记忆。" : shorten(summary, 400);
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            log.warn("[agent] MemoryAgent summarizeMemory degraded: error={}", e.getClass().getSimpleName());
             return "无相关历史记忆。";
         }
     }
@@ -216,7 +221,9 @@ public class MemoryAgent implements MindBridgeAgent {
                     if (sb.length() > 0) sb.append("\n");
                     sb.append("[").append(agentName.name()).append("] ").append(summary);
                 }
-            } catch (Exception ignored) {
+            } catch (Exception e) {
+                log.debug("[agent] MemoryAgent private memory load skipped: agent={}, error={}",
+                        agentName, e.getClass().getSimpleName());
                 // 私有记忆读取失败不影响主链路
             }
         }
