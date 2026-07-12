@@ -41,6 +41,11 @@ public class KnowledgeAgent implements MindBridgeAgent {
     }
 
     @Override
+    public AgentAction getExpectedAction() {
+        return AgentAction.RETRIEVE_KNOWLEDGE;
+    }
+
+    @Override
     public boolean supports(AgentContext context) {
         return context.intentRouted()
                 && !context.knowledgeHandled()

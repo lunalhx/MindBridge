@@ -2,6 +2,7 @@ package com.mindbridge.agent.service.agent.runtime;
 
 import com.mindbridge.agent.domain.ChatSession;
 import com.mindbridge.agent.domain.UserAccount;
+import com.mindbridge.agent.service.agent.AgentAction;
 import com.mindbridge.agent.service.agent.AgentContext;
 import com.mindbridge.agent.service.agent.AgentDecision;
 import com.mindbridge.agent.service.agent.AgentRunResult;
@@ -42,7 +43,8 @@ public class SequentialAgentRuntime implements AgentRuntime {
         int startStep = context.steps().size() + 1;
         for (int step = startStep; step <= MAX_STEPS && !context.finished(); step++) {
             MindBridgeAgent agent = nextAgent(context);
-            String action = "";
+            AgentAction expectedAction = agent.getExpectedAction();
+            String action = expectedAction != null ? expectedAction.name() : "";
             listener.onStarted(step, agent.name(), action);
             try {
                 AgentDecision decision = agent.act(context);

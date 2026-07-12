@@ -81,7 +81,8 @@ public class EventDrivenAgentRuntime implements AgentRuntime {
     public AgentRunResult run(AgentContext context, AgentStepListener listener) {
         int revisions = 0;
 
-        for (int round = 1; round <= maxRounds; round++) {
+        int startRound = context.steps().size() + 1;
+        for (int round = startRound; round <= maxRounds; round++) {
             AgentBlackboard board = context.blackboard();
 
             // 1. 推导待办任务
@@ -92,12 +93,18 @@ public class EventDrivenAgentRuntime implements AgentRuntime {
                     return AgentRunResult.from(context);
                 }
                 if (revisions >= maxRevisions) {
+                    context.appendEvent(new AgentEvent(
+                            "REVISION_EXHAUSTED", null,
+                            "Revision 次数已达上限 (" + maxRevisions + ")，安全门禁仍未通过"));
                     throw new AgentRuntimeExecutionException(
                             "Event-driven runtime exhausted max revisions (" + maxRevisions
                                     + ") without passing safety gate",
                             RuntimeMode.EVENT_DRIVEN, context);
                 }
                 revisions++;
+                context.appendEvent(new AgentEvent(
+                        "REVISION_CREATED", null,
+                        "安全门禁未通过，创建 revision 任务（第 " + revisions + "/" + maxRevisions + " 次）"));
                 tasks = List.of(revisionTask(board));
             }
 
@@ -120,7 +127,7 @@ public class EventDrivenAgentRuntime implements AgentRuntime {
             } catch (Exception e) {
                 listener.onFailed(step, selected.agentName(), action,
                         SequentialAgentRuntime.sanitizeObservation(e.getMessage()));
-                context.blackboard().addEvent(new AgentEvent(
+                context.appendEvent(new AgentEvent(
                         "AGENT_EXECUTION_ERROR", selected.agentName(),
                         "Agent 执行异常: " + e.getClass().getSimpleName()));
                 throw new AgentRuntimeExecutionException(
@@ -135,7 +142,7 @@ public class EventDrivenAgentRuntime implements AgentRuntime {
 
             if (decision.artifacts() != null) {
                 for (AgentArtifact artifact : decision.artifacts()) {
-                    context.blackboard().addArtifact(artifact);
+                    context.applyArtifact(artifact);
                 }
             }
 
@@ -145,6 +152,9 @@ public class EventDrivenAgentRuntime implements AgentRuntime {
                     return AgentRunResult.from(context);
                 }
                 if (revisions >= maxRevisions) {
+                    context.appendEvent(new AgentEvent(
+                            "REVISION_EXHAUSTED", null,
+                            "Agent 完成后 revision 次数已达上限 (" + maxRevisions + ")，安全门禁仍未通过"));
                     throw new AgentRuntimeExecutionException(
                             "Event-driven runtime exhausted max revisions after agent completion",
                             RuntimeMode.EVENT_DRIVEN, context);

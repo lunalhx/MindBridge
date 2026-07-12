@@ -48,6 +48,11 @@ public class CompanionAgent implements MindBridgeAgent {
     }
 
     @Override
+    public AgentAction getExpectedAction() {
+        return AgentAction.PLAN_RESPONSE;
+    }
+
+    @Override
     public boolean supports(AgentContext context) {
         return context.intentRouted()
                 && context.intent() == IntentType.CHAT

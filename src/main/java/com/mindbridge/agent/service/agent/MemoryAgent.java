@@ -84,6 +84,11 @@ public class MemoryAgent implements MindBridgeAgent {
     }
 
     @Override
+    public AgentAction getExpectedAction() {
+        return AgentAction.READ_MEMORY;
+    }
+
+    @Override
     public boolean supports(AgentContext context) {
         return !context.memoryLoaded();
     }

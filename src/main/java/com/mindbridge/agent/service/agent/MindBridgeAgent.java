@@ -39,6 +39,18 @@ public interface MindBridgeAgent {
     }
 
     /**
+     * 返回该 Agent 预期执行的 {@link AgentAction}。
+     *
+     * <p>用于在 Agent 实际执行前填充 SSE STARTED 事件的 action 字段。
+     * 默认返回 {@code null}，表示不提供预期动作（兼容旧行为）。</p>
+     *
+     * @return 预期的 AgentAction，或 null 表示未知
+     */
+    default AgentAction getExpectedAction() {
+        return null;
+    }
+
+    /**
      * 声明式执行入口：在声明式运行时中被选中后执行具体任务。
      *
      * <p>默认桥接到旧的 {@code act(AgentContext)} 路径。

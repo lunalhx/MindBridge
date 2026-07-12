@@ -31,6 +31,11 @@ public class RiskGuardianAgent implements MindBridgeAgent {
     }
 
     @Override
+    public AgentAction getExpectedAction() {
+        return AgentAction.ASSESS_RISK;
+    }
+
+    @Override
     public boolean supports(AgentContext context) {
         return context.knowledgeHandled()
                 && !context.riskAssessed()

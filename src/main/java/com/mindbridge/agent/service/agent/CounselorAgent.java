@@ -47,6 +47,11 @@ public class CounselorAgent implements MindBridgeAgent {
     }
 
     @Override
+    public AgentAction getExpectedAction() {
+        return AgentAction.PLAN_RESPONSE;
+    }
+
+    @Override
     public boolean supports(AgentContext context) {
         return context.riskAssessed()
                 && context.intent() != IntentType.CHAT

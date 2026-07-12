@@ -28,6 +28,11 @@ public class SupervisorAgent implements MindBridgeAgent {
     }
 
     @Override
+    public AgentAction getExpectedAction() {
+        return AgentAction.ROUTE_INTENT;
+    }
+
+    @Override
     public boolean supports(AgentContext context) {
         return context.memoryLoaded() && !context.intentRouted();
     }

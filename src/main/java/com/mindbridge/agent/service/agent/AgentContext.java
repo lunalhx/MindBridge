@@ -274,6 +274,55 @@ public class AgentContext {
         return blackboard;
     }
 
+    // ────────────── Blackboard 安全方法（始终接住不可变实例） ──────────────
+
+    /**
+     * 追加一个审计事件到 Blackboard，自动接住不可变 Blackboard 返回的新实例。
+     * 调用方不需要自行赋值 this.blackboard = ...。
+     */
+    public void appendEvent(AgentEvent event) {
+        this.blackboard = this.blackboard.addEvent(event);
+    }
+
+    /**
+     * 应用一个 artifact 到 Blackboard，自动接住新实例并同步对应的可变字段。
+     * artifact 名称匹配时同步 intent/assessment/knowledge/response 字段。
+     */
+    public void applyArtifact(AgentArtifact artifact) {
+        this.blackboard = this.blackboard.addArtifact(artifact);
+        // 同步对应的可变字段
+        switch (artifact.name()) {
+            case AgentArtifact.NAME_INTENT -> {
+                if (artifact.payload() instanceof IntentType it) this.intent = it;
+            }
+            case AgentArtifact.NAME_ASSESSMENT -> {
+                if (artifact.payload() instanceof PsychologyAssessment pa) this.assessment = pa;
+            }
+            case AgentArtifact.NAME_KNOWLEDGE -> {
+                if (artifact.payload() instanceof List<?> list) {
+                    @SuppressWarnings("unchecked")
+                    List<SearchResult> sr = (List<SearchResult>) list;
+                    this.retrievedKnowledge = sr;
+                }
+            }
+            case AgentArtifact.NAME_RESPONSE -> {
+                if (artifact.payload() instanceof ResponseArtifactPayload rap) {
+                    this.responsePlan = rap.plan();
+                    this.responseMessages = rap.messages();
+                    if (artifact.producer() != null) this.responseAgent = artifact.producer();
+                }
+            }
+        }
+    }
+
+    /**
+     * 用一个新的 Blackboard 实例替换当前 Blackboard。
+     * 用于 checkpoint 恢复等场景。
+     */
+    public void replaceBlackboard(AgentBlackboard newBoard) {
+        this.blackboard = newBoard;
+    }
+
     /**
      * 从 checkpoint 恢复非 Blackboard 管理的可变字段。
      *
