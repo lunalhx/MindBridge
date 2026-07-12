@@ -1,6 +1,7 @@
 package com.mindbridge.agent.service.agent.runtime;
 
 import com.mindbridge.agent.config.MindBridgeProperties;
+import com.mindbridge.agent.service.agent.AgentExecutionLifecycle;
 import com.mindbridge.agent.service.agent.MindBridgeAgent;
 import com.mindbridge.agent.service.agent.registry.AgentRegistry;
 import java.util.List;
@@ -17,10 +18,13 @@ public class AgentRuntimeFactory {
 
     private final List<MindBridgeAgent> agents;
     private final MindBridgeProperties properties;
+    private final AgentExecutionLifecycle lifecycle;
 
-    public AgentRuntimeFactory(List<MindBridgeAgent> agents, MindBridgeProperties properties) {
+    public AgentRuntimeFactory(List<MindBridgeAgent> agents, MindBridgeProperties properties,
+                               AgentExecutionLifecycle lifecycle) {
         this.agents = agents;
         this.properties = properties;
+        this.lifecycle = lifecycle;
     }
 
     /**
@@ -33,12 +37,13 @@ public class AgentRuntimeFactory {
     public AgentRuntime runtime() {
         RuntimeMode mode = resolveMode();
         return switch (mode) {
-            case SEQUENTIAL -> new SequentialAgentRuntime(agents);
-            case GRAPH -> GraphAgentRuntime.fromAgents(agents);
+            case SEQUENTIAL -> new SequentialAgentRuntime(agents, lifecycle);
+            case GRAPH -> GraphAgentRuntime.fromAgents(agents, lifecycle);
             case EVENT_DRIVEN -> new EventDrivenAgentRuntime(
                     new AgentRegistry(agents, properties.getAgent().getDecisionThreshold()),
                     properties.getAgent().getMaxRounds(),
-                    properties.getAgent().getMaxRevisions());
+                    properties.getAgent().getMaxRevisions(),
+                    lifecycle);
         };
     }
 
@@ -47,12 +52,13 @@ public class AgentRuntimeFactory {
      */
     public AgentRuntime runtime(RuntimeMode mode) {
         return switch (mode) {
-            case SEQUENTIAL -> new SequentialAgentRuntime(agents);
-            case GRAPH -> GraphAgentRuntime.fromAgents(agents);
+            case SEQUENTIAL -> new SequentialAgentRuntime(agents, lifecycle);
+            case GRAPH -> GraphAgentRuntime.fromAgents(agents, lifecycle);
             case EVENT_DRIVEN -> new EventDrivenAgentRuntime(
                     new AgentRegistry(agents, properties.getAgent().getDecisionThreshold()),
                     properties.getAgent().getMaxRounds(),
-                    properties.getAgent().getMaxRevisions());
+                    properties.getAgent().getMaxRevisions(),
+                    lifecycle);
         };
     }
 

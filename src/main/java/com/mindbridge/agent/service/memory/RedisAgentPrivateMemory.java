@@ -3,7 +3,7 @@ package com.mindbridge.agent.service.memory;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mindbridge.agent.config.MindBridgeProperties;
 import com.mindbridge.agent.service.agent.AgentName;
-import com.mindbridge.agent.service.ai.AiClient;
+import com.mindbridge.agent.service.ai.AgentModelRegistry;
 import com.mindbridge.agent.service.ai.AiMessage;
 import com.mindbridge.agent.service.memory.ShortTermMemoryService.MemoryMessage;
 import java.time.Duration;
@@ -38,18 +38,18 @@ public class RedisAgentPrivateMemory implements AgentPrivateMemory {
 
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
-    private final AiClient aiClient;
+    private final AgentModelRegistry agentModelRegistry;
     private final MindBridgeProperties properties;
 
     public RedisAgentPrivateMemory(
             StringRedisTemplate redisTemplate,
             ObjectMapper objectMapper,
-            AiClient aiClient,
+            AgentModelRegistry agentModelRegistry,
             MindBridgeProperties properties
     ) {
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
-        this.aiClient = aiClient;
+        this.agentModelRegistry = agentModelRegistry;
         this.properties = properties;
     }
 
@@ -147,7 +147,7 @@ public class RedisAgentPrivateMemory implements AgentPrivateMemory {
             String historyText = messages.stream()
                     .map(m -> m.role() + ": " + m.content())
                     .reduce("", (a, b) -> a + "\n" + b);
-            return aiClient.complete(List.of(
+            return agentModelRegistry.clientFor(agentName).complete(List.of(
                     AiMessage.system("""
                             你是 MindBridge 的记忆压缩助手。
                             请将以下对话历史压缩为 2-3 条中文要点摘要，保留关键上下文信息。

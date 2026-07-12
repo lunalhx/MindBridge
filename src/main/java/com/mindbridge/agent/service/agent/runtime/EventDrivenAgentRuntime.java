@@ -5,6 +5,7 @@ import com.mindbridge.agent.domain.IntentType;
 import com.mindbridge.agent.domain.UserAccount;
 import com.mindbridge.agent.service.agent.AgentContext;
 import com.mindbridge.agent.service.agent.AgentDecision;
+import com.mindbridge.agent.service.agent.AgentExecutionLifecycle;
 import com.mindbridge.agent.service.agent.AgentName;
 import com.mindbridge.agent.service.agent.AgentRunResult;
 import com.mindbridge.agent.service.agent.AgentStep;
@@ -44,17 +45,24 @@ public class EventDrivenAgentRuntime implements AgentRuntime {
     private final AgentRegistry registry;
     private final int maxRounds;
     private final int maxRevisions;
+    private final AgentExecutionLifecycle lifecycle;
 
     public EventDrivenAgentRuntime(AgentRegistry registry) {
-        this(registry, DEFAULT_MAX_ROUNDS, DEFAULT_MAX_REVISIONS);
+        this(registry, DEFAULT_MAX_ROUNDS, DEFAULT_MAX_REVISIONS, null);
     }
 
     public EventDrivenAgentRuntime(AgentRegistry registry, int maxRounds, int maxRevisions) {
+        this(registry, maxRounds, maxRevisions, null);
+    }
+
+    public EventDrivenAgentRuntime(AgentRegistry registry, int maxRounds, int maxRevisions,
+                                   AgentExecutionLifecycle lifecycle) {
         if (maxRounds < 1) throw new IllegalArgumentException("maxRounds must be >= 1");
         if (maxRevisions < 0) throw new IllegalArgumentException("maxRevisions must be >= 0");
         this.registry = registry;
         this.maxRounds = maxRounds;
         this.maxRevisions = maxRevisions;
+        this.lifecycle = lifecycle;
     }
 
     /**
@@ -62,8 +70,17 @@ public class EventDrivenAgentRuntime implements AgentRuntime {
      */
     public static EventDrivenAgentRuntime fromAgents(
             List<MindBridgeAgent> agents, int maxRounds, int maxRevisions) {
+        return fromAgents(agents, maxRounds, maxRevisions, null);
+    }
+
+    /**
+     * 从 Spring 注入的 Agent 列表和配置构建（带生命周期钩子）。
+     */
+    public static EventDrivenAgentRuntime fromAgents(
+            List<MindBridgeAgent> agents, int maxRounds, int maxRevisions,
+            AgentExecutionLifecycle lifecycle) {
         var reg = new AgentRegistry(agents, AgentRegistry.DEFAULT_THRESHOLD);
-        return new EventDrivenAgentRuntime(reg, maxRounds, maxRevisions);
+        return new EventDrivenAgentRuntime(reg, maxRounds, maxRevisions, lifecycle);
     }
 
     @Override
@@ -121,6 +138,10 @@ public class EventDrivenAgentRuntime implements AgentRuntime {
             int step = context.steps().size() + 1;
             String action = selected.capability().name();
             listener.onStarted(step, selected.agentName(), action);
+            String sessionId = context.session() != null ? context.session().getPublicId() : null;
+            if (lifecycle != null && sessionId != null) {
+                lifecycle.beforeStep(context, selected.agentName(), sessionId);
+            }
             AgentDecision decision;
             try {
                 decision = agent.act(context);
@@ -137,6 +158,9 @@ public class EventDrivenAgentRuntime implements AgentRuntime {
             }
 
             context.addStep(AgentStep.of(step, selected.agentName(), decision));
+            if (lifecycle != null && sessionId != null) {
+                lifecycle.afterStep(context, selected.agentName(), sessionId, decision.observation());
+            }
             listener.onCompleted(step, selected.agentName(), action,
                     SequentialAgentRuntime.sanitizeObservation(decision.observation()));
 

@@ -5,6 +5,7 @@ import com.mindbridge.agent.domain.UserAccount;
 import com.mindbridge.agent.service.agent.AgentAction;
 import com.mindbridge.agent.service.agent.AgentContext;
 import com.mindbridge.agent.service.agent.AgentDecision;
+import com.mindbridge.agent.service.agent.AgentExecutionLifecycle;
 import com.mindbridge.agent.service.agent.AgentRunResult;
 import com.mindbridge.agent.service.agent.AgentStep;
 import com.mindbridge.agent.service.agent.MindBridgeAgent;
@@ -22,9 +23,15 @@ public class SequentialAgentRuntime implements AgentRuntime {
     public static final int MAX_STEPS = 8;
 
     private final List<MindBridgeAgent> agents;
+    private final AgentExecutionLifecycle lifecycle;
 
     public SequentialAgentRuntime(List<MindBridgeAgent> agents) {
+        this(agents, null);
+    }
+
+    public SequentialAgentRuntime(List<MindBridgeAgent> agents, AgentExecutionLifecycle lifecycle) {
         this.agents = List.copyOf(agents);
+        this.lifecycle = lifecycle;
     }
 
     @Override
@@ -46,10 +53,17 @@ public class SequentialAgentRuntime implements AgentRuntime {
             AgentAction expectedAction = agent.getExpectedAction();
             String action = expectedAction != null ? expectedAction.name() : "";
             listener.onStarted(step, agent.name(), action);
+            String sessionId = context.session() != null ? context.session().getPublicId() : null;
+            if (lifecycle != null && sessionId != null) {
+                lifecycle.beforeStep(context, agent.name(), sessionId);
+            }
             try {
                 AgentDecision decision = agent.act(context);
                 action = decision.action() != null ? decision.action().name() : "";
                 context.addStep(AgentStep.of(step, agent.name(), decision));
+                if (lifecycle != null && sessionId != null) {
+                    lifecycle.afterStep(context, agent.name(), sessionId, decision.observation());
+                }
                 listener.onCompleted(step, agent.name(), action,
                         sanitizeObservation(decision.observation()));
                 if (decision.complete()) {

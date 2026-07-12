@@ -11,7 +11,6 @@ import com.mindbridge.agent.service.ai.AgentModelRegistry;
 import com.mindbridge.agent.service.agent.blackboard.AgentBlackboard;
 import com.mindbridge.agent.service.agent.blackboard.AgentFlag;
 import com.mindbridge.agent.service.agent.registry.AgentCapability;
-import com.mindbridge.agent.service.memory.AgentPrivateMemoryRegistry;
 import com.mindbridge.agent.service.memory.ShortTermMemoryService;
 import com.mindbridge.agent.service.memory.ShortTermMemoryService.MemoryMessage;
 import com.mindbridge.agent.service.memory.UserProfileMemoryService;
@@ -39,10 +38,9 @@ public class MemoryAgent implements MindBridgeAgent {
     private final PrivacySanitizer privacySanitizer;
     private final AgentModelRegistry agentModelRegistry;
     private final UserProfileMemoryService userProfileMemoryService;
-    private final AgentPrivateMemoryRegistry privateMemoryRegistry;
 
     /**
-     * Spring 主构造：注入私有记忆 registry（可选，Spring 容器中有则注入）。
+     * Spring 主构造。
      */
     @Autowired
     public MemoryAgent(
@@ -51,8 +49,7 @@ public class MemoryAgent implements MindBridgeAgent {
             MindBridgeProperties properties,
             PrivacySanitizer privacySanitizer,
             AgentModelRegistry agentModelRegistry,
-            UserProfileMemoryService userProfileMemoryService,
-            AgentPrivateMemoryRegistry privateMemoryRegistry
+            UserProfileMemoryService userProfileMemoryService
     ) {
         this.chatMessageRepository = chatMessageRepository;
         this.shortTermMemoryService = shortTermMemoryService;
@@ -60,22 +57,6 @@ public class MemoryAgent implements MindBridgeAgent {
         this.privacySanitizer = privacySanitizer;
         this.agentModelRegistry = agentModelRegistry;
         this.userProfileMemoryService = userProfileMemoryService;
-        this.privateMemoryRegistry = privateMemoryRegistry;
-    }
-
-    /**
-     * 测试兼容构造：不注入私有记忆 registry，私有记忆功能跳过。
-     */
-    public MemoryAgent(
-            ChatMessageRepository chatMessageRepository,
-            ShortTermMemoryService shortTermMemoryService,
-            MindBridgeProperties properties,
-            PrivacySanitizer privacySanitizer,
-            AgentModelRegistry agentModelRegistry,
-            UserProfileMemoryService userProfileMemoryService
-    ) {
-        this(chatMessageRepository, shortTermMemoryService, properties,
-                privacySanitizer, agentModelRegistry, userProfileMemoryService, null);
     }
 
     @Override
@@ -126,10 +107,15 @@ public class MemoryAgent implements MindBridgeAgent {
 
         String profileBrief = userProfileMemoryService.profileBrief(context.user(), context.modelInput());
         String historyBrief = summarizeMemory(previousHistory, context.modelInput());
-        String privateMemoryBrief = loadPrivateMemorySummaries(context.session().getPublicId());
         context.setPreviousHistory(previousHistory);
         context.setModelHistory(withCurrentUser(previousHistory, context.modelInput()));
-        context.setMemoryBrief(combineMemoryBrief(profileBrief, historyBrief, privateMemoryBrief));
+        String memoryBrief = combineMemoryBrief(profileBrief, historyBrief);
+        // 注入当前 Agent（MemoryAgent）的私有记忆摘要（由 AgentExecutionLifecycle 在步骤前注入）
+        String agentMemory = context.currentAgentPrivateMemory();
+        if (agentMemory != null && !agentMemory.isBlank()) {
+            memoryBrief = "【本Agent历史摘要】\n" + agentMemory + "\n\n" + memoryBrief;
+        }
+        context.setMemoryBrief(memoryBrief);
         context.markMemoryLoaded();
         return AgentDecision.continueWith(
                 AgentAction.READ_MEMORY,
@@ -181,11 +167,10 @@ public class MemoryAgent implements MindBridgeAgent {
         }
     }
 
-    private String combineMemoryBrief(String profileBrief, String historyBrief, String privateMemoryBrief) {
+    private String combineMemoryBrief(String profileBrief, String historyBrief) {
         boolean hasProfile = profileBrief != null && !profileBrief.equals("无已保存用户画像。");
         boolean hasHistory = historyBrief != null && !historyBrief.equals("无相关历史记忆。");
-        boolean hasPrivate = privateMemoryBrief != null && !privateMemoryBrief.isBlank();
-        if (!hasProfile && !hasHistory && !hasPrivate) {
+        if (!hasProfile && !hasHistory) {
             return "无相关历史记忆。";
         }
         StringBuilder sb = new StringBuilder();
@@ -195,42 +180,6 @@ public class MemoryAgent implements MindBridgeAgent {
         if (hasHistory) {
             if (sb.length() > 0) sb.append("\n\n");
             sb.append("最近对话记忆：\n").append(historyBrief);
-        }
-        if (hasPrivate) {
-            if (sb.length() > 0) sb.append("\n\n");
-            sb.append("Agent 私有记忆：\n").append(privateMemoryBrief);
-        }
-        return sb.toString();
-    }
-
-    /**
-     * 加载各 Agent 的私有记忆摘要（如 registry 可用）。
-     *
-     * <p>只加载摘要，不加载完整消息，避免将某个 Agent 的私有内容泄漏给无关 Agent。
-     * 摘要按 Agent 名称标注，各 Agent 可在后续步骤中读取自己的私有记忆。</p>
-     */
-    private String loadPrivateMemorySummaries(String sessionId) {
-        if (privateMemoryRegistry == null) {
-            return "";
-        }
-        StringBuilder sb = new StringBuilder();
-        for (AgentName agentName : List.of(
-                AgentName.SUPERVISOR_AGENT,
-                AgentName.KNOWLEDGE_AGENT,
-                AgentName.RISK_GUARDIAN_AGENT,
-                AgentName.COMPANION_AGENT,
-                AgentName.COUNSELOR_AGENT)) {
-            try {
-                String summary = privateMemoryRegistry.summarize(agentName, sessionId);
-                if (summary != null && !summary.isBlank()) {
-                    if (sb.length() > 0) sb.append("\n");
-                    sb.append("[").append(agentName.name()).append("] ").append(summary);
-                }
-            } catch (Exception e) {
-                log.debug("[agent] MemoryAgent private memory load skipped: agent={}, error={}",
-                        agentName, e.getClass().getSimpleName());
-                // 私有记忆读取失败不影响主链路
-            }
         }
         return sb.toString();
     }

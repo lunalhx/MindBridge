@@ -5,6 +5,7 @@ import com.mindbridge.agent.domain.UserAccount;
 import com.mindbridge.agent.service.agent.AgentAction;
 import com.mindbridge.agent.service.agent.AgentContext;
 import com.mindbridge.agent.service.agent.AgentDecision;
+import com.mindbridge.agent.service.agent.AgentExecutionLifecycle;
 import com.mindbridge.agent.service.agent.AgentName;
 import com.mindbridge.agent.service.agent.AgentRunResult;
 import com.mindbridge.agent.service.agent.AgentStep;
@@ -34,9 +35,15 @@ public class GraphAgentRuntime implements AgentRuntime {
     public static final int MAX_STEPS = 8;
 
     private final AgentGraph graph;
+    private final AgentExecutionLifecycle lifecycle;
 
     public GraphAgentRuntime(AgentGraph graph) {
+        this(graph, null);
+    }
+
+    public GraphAgentRuntime(AgentGraph graph, AgentExecutionLifecycle lifecycle) {
         this.graph = graph;
+        this.lifecycle = lifecycle;
     }
 
     /**
@@ -48,7 +55,15 @@ public class GraphAgentRuntime implements AgentRuntime {
      * @return GraphAgentRuntime 实例
      */
     public static GraphAgentRuntime fromAgents(List<com.mindbridge.agent.service.agent.MindBridgeAgent> agents) {
-        return new GraphAgentRuntime(mindBridgeGraph(agents));
+        return fromAgents(agents, null);
+    }
+
+    /**
+     * 从 Spring 注入的 Agent 列表构建 MindBridge 标准业务图（带生命周期钩子）。
+     */
+    public static GraphAgentRuntime fromAgents(List<com.mindbridge.agent.service.agent.MindBridgeAgent> agents,
+                                                AgentExecutionLifecycle lifecycle) {
+        return new GraphAgentRuntime(mindBridgeGraph(agents), lifecycle);
     }
 
     /**
@@ -128,10 +143,17 @@ public class GraphAgentRuntime implements AgentRuntime {
             AgentAction expectedAction = agent.getExpectedAction();
             String action = expectedAction != null ? expectedAction.name() : "";
             listener.onStarted(step, current, action);
+            String sessionId = context.session() != null ? context.session().getPublicId() : null;
+            if (lifecycle != null && sessionId != null) {
+                lifecycle.beforeStep(context, current, sessionId);
+            }
             try {
                 AgentDecision decision = agent.act(context);
                 action = decision.action() != null ? decision.action().name() : "";
                 context.addStep(AgentStep.of(step, current, decision));
+                if (lifecycle != null && sessionId != null) {
+                    lifecycle.afterStep(context, current, sessionId, decision.observation());
+                }
                 listener.onCompleted(step, current, action,
                         SequentialAgentRuntime.sanitizeObservation(decision.observation()));
 

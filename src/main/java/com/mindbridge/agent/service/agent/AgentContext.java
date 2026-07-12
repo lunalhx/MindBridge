@@ -48,6 +48,9 @@ public class AgentContext {
     private RiskLevel riskLevel = RiskLevel.LOW;
     private AgentName responseAgent = AgentName.COMPANION_AGENT;
 
+    // 当前 Agent 的私有记忆（仅当前正在执行的 Agent 可读取，步骤结束后清除）
+    private String currentAgentPrivateMemory = "";
+
     // ────────────── Blackboard（flag 和 artifact 的权威来源） ──────────────
 
     private AgentBlackboard blackboard;
@@ -134,6 +137,24 @@ public class AgentContext {
 
     public AgentName responseAgent()       { return responseAgent; }
     public void setResponseAgent(AgentName v) { this.responseAgent = v; }
+
+    /**
+     * 设置当前 Agent 的私有记忆摘要。
+     * 由 AgentExecutionLifecycle 在步骤开始前调用。
+     */
+    public void setCurrentAgentPrivateMemory(String text) { this.currentAgentPrivateMemory = text != null ? text : ""; }
+
+    /**
+     * 获取当前 Agent 的私有记忆摘要。
+     * 当前执行的 Agent 在 act() 中读取此字段。
+     */
+    public String currentAgentPrivateMemory() { return currentAgentPrivateMemory; }
+
+    /**
+     * 清除当前 Agent 的私有记忆。
+     * 由 AgentExecutionLifecycle 在步骤结束后调用。
+     */
+    public void clearCurrentAgentPrivateMemory() { this.currentAgentPrivateMemory = ""; }
 
     // ────────────── 六状态标记（委托给 Blackboard AgentFlag） ──────────────
 

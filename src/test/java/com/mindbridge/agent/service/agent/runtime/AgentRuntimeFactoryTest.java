@@ -32,7 +32,7 @@ class AgentRuntimeFactoryTest {
 
     @Test
     void factoryShouldReturnSequentialForDefaultConfig() {
-        var factory = new AgentRuntimeFactory(emptyAgents(), new MindBridgeProperties());
+        var factory = new AgentRuntimeFactory(emptyAgents(), new MindBridgeProperties(), null);
         AgentRuntime runtime = factory.runtime();
         assertThat(runtime).isInstanceOf(SequentialAgentRuntime.class);
         assertThat(runtime.mode()).isEqualTo(RuntimeMode.SEQUENTIAL);
@@ -40,21 +40,21 @@ class AgentRuntimeFactoryTest {
 
     @Test
     void factoryShouldReturnSequentialForExplicitSequential() {
-        var factory = new AgentRuntimeFactory(emptyAgents(), props("SEQUENTIAL"));
+        var factory = new AgentRuntimeFactory(emptyAgents(), props("SEQUENTIAL"), null);
         AgentRuntime runtime = factory.runtime();
         assertThat(runtime).isInstanceOf(SequentialAgentRuntime.class);
     }
 
     @Test
     void factoryShouldHandleCaseInsensitiveMode() {
-        var factory = new AgentRuntimeFactory(emptyAgents(), props("sequential"));
+        var factory = new AgentRuntimeFactory(emptyAgents(), props("sequential"), null);
         AgentRuntime runtime = factory.runtime();
         assertThat(runtime).isInstanceOf(SequentialAgentRuntime.class);
     }
 
     @Test
     void factoryShouldHandleBlankModeAsSequential() {
-        var factory = new AgentRuntimeFactory(emptyAgents(), props(""));
+        var factory = new AgentRuntimeFactory(emptyAgents(), props(""), null);
         AgentRuntime runtime = factory.runtime();
         assertThat(runtime).isInstanceOf(SequentialAgentRuntime.class);
     }
@@ -63,14 +63,14 @@ class AgentRuntimeFactoryTest {
     void factoryShouldHandleNullModeAsSequential() {
         MindBridgeProperties p = new MindBridgeProperties();
         p.getAgent().setRuntimeMode(null);
-        var factory = new AgentRuntimeFactory(emptyAgents(), p);
+        var factory = new AgentRuntimeFactory(emptyAgents(), p, null);
         AgentRuntime runtime = factory.runtime();
         assertThat(runtime).isInstanceOf(SequentialAgentRuntime.class);
     }
 
     @Test
     void factoryShouldRejectUnknownMode() {
-        var factory = new AgentRuntimeFactory(emptyAgents(), props("PIPELINE"));
+        var factory = new AgentRuntimeFactory(emptyAgents(), props("PIPELINE"), null);
         assertThatThrownBy(factory::runtime)
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Unknown runtime-mode")
@@ -80,7 +80,7 @@ class AgentRuntimeFactoryTest {
 
     @Test
     void factoryShouldReturnGraphForGraphMode() {
-        var factory = new AgentRuntimeFactory(sixStubAgents(), props("GRAPH"));
+        var factory = new AgentRuntimeFactory(sixStubAgents(), props("GRAPH"), null);
         AgentRuntime runtime = factory.runtime();
         assertThat(runtime).isInstanceOf(GraphAgentRuntime.class);
         assertThat(runtime.mode()).isEqualTo(RuntimeMode.GRAPH);
@@ -88,7 +88,7 @@ class AgentRuntimeFactoryTest {
 
     @Test
     void factoryShouldFailGraphModeWithoutRequiredAgents() {
-        var factory = new AgentRuntimeFactory(emptyAgents(), props("GRAPH"));
+        var factory = new AgentRuntimeFactory(emptyAgents(), props("GRAPH"), null);
         assertThatThrownBy(factory::runtime)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Required agent not found");
@@ -96,7 +96,7 @@ class AgentRuntimeFactoryTest {
 
     @Test
     void factoryShouldReturnEventDrivenForEventDrivenMode() {
-        var factory = new AgentRuntimeFactory(sixStubAgents(), props("EVENT_DRIVEN"));
+        var factory = new AgentRuntimeFactory(sixStubAgents(), props("EVENT_DRIVEN"), null);
         AgentRuntime runtime = factory.runtime();
         assertThat(runtime).isInstanceOf(EventDrivenAgentRuntime.class);
         assertThat(runtime.mode()).isEqualTo(RuntimeMode.EVENT_DRIVEN);
@@ -104,21 +104,21 @@ class AgentRuntimeFactoryTest {
 
     @Test
     void factoryRuntimeByModeShouldWorkForSequential() {
-        var factory = new AgentRuntimeFactory(emptyAgents(), new MindBridgeProperties());
+        var factory = new AgentRuntimeFactory(emptyAgents(), new MindBridgeProperties(), null);
         AgentRuntime runtime = factory.runtime(RuntimeMode.SEQUENTIAL);
         assertThat(runtime).isInstanceOf(SequentialAgentRuntime.class);
     }
 
     @Test
     void factoryRuntimeByModeShouldReturnGraph() {
-        var factory = new AgentRuntimeFactory(sixStubAgents(), new MindBridgeProperties());
+        var factory = new AgentRuntimeFactory(sixStubAgents(), new MindBridgeProperties(), null);
         AgentRuntime runtime = factory.runtime(RuntimeMode.GRAPH);
         assertThat(runtime).isInstanceOf(GraphAgentRuntime.class);
     }
 
     @Test
     void factoryRuntimeByModeShouldReturnEventDriven() {
-        var factory = new AgentRuntimeFactory(sixStubAgents(), new MindBridgeProperties());
+        var factory = new AgentRuntimeFactory(sixStubAgents(), new MindBridgeProperties(), null);
         AgentRuntime runtime = factory.runtime(RuntimeMode.EVENT_DRIVEN);
         assertThat(runtime).isInstanceOf(EventDrivenAgentRuntime.class);
     }

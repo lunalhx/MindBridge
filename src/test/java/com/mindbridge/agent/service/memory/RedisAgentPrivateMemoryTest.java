@@ -14,9 +14,11 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mindbridge.agent.config.MindBridgeProperties;
 import com.mindbridge.agent.domain.MessageRole;
+import com.mindbridge.agent.harness.TestAgentModelRegistry;
 import com.mindbridge.agent.service.agent.AgentName;
 import com.mindbridge.agent.service.ai.AiClient;
 import com.mindbridge.agent.service.ai.AiMessage;
+import com.mindbridge.agent.service.ai.AgentModelRegistry;
 import com.mindbridge.agent.service.memory.ShortTermMemoryService.MemoryMessage;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -53,8 +55,9 @@ class RedisAgentPrivateMemoryTest {
         properties.getChat().setPrivateMemoryKeepRecent(2);
 
         aiClient = new FakeAiClient();
+        AgentModelRegistry modelRegistry = TestAgentModelRegistry.withFixedClient(aiClient);
         privateMemory = new RedisAgentPrivateMemory(
-                redisTemplate, new ObjectMapper(), aiClient, properties);
+                redisTemplate, new ObjectMapper(), modelRegistry, properties);
     }
 
     // ────────── Key 隔离 ──────────
