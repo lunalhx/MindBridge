@@ -24,6 +24,7 @@ public class MindBridgeProperties {
     private final Mcp mcp = new Mcp();
     private final Agent agent = new Agent();
     private final AgentModels agentModels = new AgentModels();
+    private final ToolQueue toolQueue = new ToolQueue();
 
     public Ai getAi() {
         return ai;
@@ -59,6 +60,10 @@ public class MindBridgeProperties {
 
     public AgentModels getAgentModels() {
         return agentModels;
+    }
+
+    public ToolQueue getToolQueue() {
+        return toolQueue;
     }
 
     public static class Agent {
@@ -602,5 +607,29 @@ public class MindBridgeProperties {
         public void setMcpServerDeliveryMode(String mcpServerDeliveryMode) {
             this.mcpServerDeliveryMode = mcpServerDeliveryMode;
         }
+    }
+
+    public static class ToolQueue {
+        /** 最大尝试次数（含首次）。 */
+        private int maxAttempts = 3;
+        /** 初始退避间隔（秒）。 */
+        private long initialBackoffSeconds = 10;
+        /** 退避乘数（指数退避因子）。 */
+        private double backoffMultiplier = 2.0;
+        /** Worker 轮询间隔（毫秒）。 */
+        private long pollIntervalMs = 5000;
+        /** 每次轮询最多领取的作业数。 */
+        private int batchSize = 10;
+
+        public int getMaxAttempts() { return maxAttempts; }
+        public void setMaxAttempts(int maxAttempts) { this.maxAttempts = maxAttempts; }
+        public long getInitialBackoffSeconds() { return initialBackoffSeconds; }
+        public void setInitialBackoffSeconds(long initialBackoffSeconds) { this.initialBackoffSeconds = initialBackoffSeconds; }
+        public double getBackoffMultiplier() { return backoffMultiplier; }
+        public void setBackoffMultiplier(double backoffMultiplier) { this.backoffMultiplier = backoffMultiplier; }
+        public long getPollIntervalMs() { return pollIntervalMs; }
+        public void setPollIntervalMs(long pollIntervalMs) { this.pollIntervalMs = pollIntervalMs; }
+        public int getBatchSize() { return batchSize; }
+        public void setBatchSize(int batchSize) { this.batchSize = batchSize; }
     }
 }
