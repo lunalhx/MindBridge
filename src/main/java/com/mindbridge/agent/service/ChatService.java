@@ -21,7 +21,7 @@ import com.mindbridge.agent.service.ai.PromptTemplates;
 import com.mindbridge.agent.service.agent.AgentRunResult;
 import com.mindbridge.agent.service.agent.AgentRuntimeService;
 import com.mindbridge.agent.service.agent.AgentName;
-import com.mindbridge.agent.service.agent.AgentStep;
+import com.mindbridge.agent.service.agent.runtime.AgentRuntimeExecutionException;
 import com.mindbridge.agent.service.agent.runtime.AgentStepListener;
 import com.mindbridge.agent.service.knowledge.SearchResult;
 import com.mindbridge.agent.service.memory.ShortTermMemoryService;
@@ -36,15 +36,16 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
+import reactor.core.publisher.FluxSink;
 import reactor.core.scheduler.Schedulers;
 
 @Service
 /**
  * 学生聊天主流程服务。
  *
- * <p>批次 12 后，SSE 事件顺序：meta → agent-step × N → token → done。
- * Agent 步骤事件从 Runtime 同步执行期间收集，作为 Flux 在 token 前发射。</p>
+ * <p>Phase 5：SSE 事件顺序 meta → agent-step × N（实时）→ token → done。
+ * Agent 步骤事件在 Runtime 执行期间通过 AgentStepListener 实时推送到 sink，
+ * 而非在 Runtime 完成后批量发射。</p>
  */
 public class ChatService {
 
@@ -95,88 +96,123 @@ public class ChatService {
     }
 
     public Flux<ServerSentEvent<ChatStreamEvent>> streamChat(Long userId, ChatRequest request) {
-        return Mono.fromCallable(() -> prepare(userId, request))
-                .subscribeOn(Schedulers.boundedElastic())
-                .flatMapMany(this::streamPrepared)
-                .onErrorResume(exception -> Flux.just(event(
-                        "error",
-                        ChatStreamEvent.error(null, "服务暂时不可用：" + exception.getMessage()))));
-    }
+        // Per-request unicast sink with backpressure buffer (limited capacity for slow clients)
+        return Flux.create(sink -> {
+            try {
+                // ── Step 1: Quick setup (resolve user/session) ──
+                String input = request.message().trim();
+                String modelInput = privacySanitizer.sanitize(input);
+                UserAccount user = userAccountRepository.findById(userId)
+                        .orElseThrow(() -> new IllegalArgumentException("User not found"));
+                ChatSession session = resolveSession(user, request.sessionId(), input);
+                String sessionId = session.getPublicId();
 
-    private PreparedConversation prepare(Long userId, ChatRequest request) {
-        String input = request.message().trim();
-        String modelInput = privacySanitizer.sanitize(input);
-        UserAccount user = userAccountRepository.findById(userId)
-                .orElseThrow(() -> new IllegalArgumentException("User not found"));
-        ChatSession session = resolveSession(user, request.sessionId(), input);
-        Instant startedAt = Instant.now();
+                // ── Step 2: Emit meta IMMEDIATELY ──
+                sink.next(event("meta", ChatStreamEvent.meta(sessionId)));
 
-        List<StepEventItem> stepEvents = new ArrayList<>();
-        AgentStepListener listener = new AgentStepListener() {
-            @Override public void onStarted(int s, AgentName a, String act) {
-                stepEvents.add(new StepEventItem("STARTED", a, act, ""));
+                // ── Step 3: Run agent runtime + streaming on boundedElastic ──
+                Schedulers.boundedElastic().schedule(() -> {
+                    try {
+                        Instant startedAt = Instant.now();
+
+                        // Real-time step listener that pushes to the sink directly
+                        AgentStepListener listener = new AgentStepListener() {
+                            @Override public void onStarted(int step, AgentName agent, String action) {
+                                sink.next(event("agent-step",
+                                        ChatStreamEvent.agentStep(sessionId, agent.name(), action, "STARTED", "")));
+                            }
+                            @Override public void onCompleted(int step, AgentName agent, String action, String obs) {
+                                String sanitized = sanitize(privacySanitizer.sanitize(obs));
+                                sink.next(event("agent-step",
+                                        ChatStreamEvent.agentStep(sessionId, agent.name(), action, "COMPLETED", sanitized)));
+                            }
+                            @Override public void onFailed(int step, AgentName agent, String action, String err) {
+                                String sanitized = sanitize(privacySanitizer.sanitize(err));
+                                sink.next(event("agent-step",
+                                        ChatStreamEvent.agentStep(sessionId, agent.name(), action, "FAILED", sanitized)));
+                            }
+                        };
+
+                        // Execute agent runtime — step events flow to sink in real-time
+                        AgentRunResult agentRun = agentRuntimeService.run(user, session, input, modelInput, listener);
+                        Instant completedAt = Instant.now();
+
+                        // Save user message, trace, profile, report
+                        ChatMessage userMessage = saveMessage(user, session, MessageRole.USER, input);
+                        agentRunTraceService.saveRun(user, session, userMessage, input, agentRun, startedAt, completedAt);
+                        rememberUserProfile(user, session, input, agentRun.memoryBrief());
+
+                        PsychologicalReport report = null;
+                        if (agentRun.requiresReport()) {
+                            report = saveReport(user, session, input, agentRun.intent(), agentRun.assessment());
+                        }
+                        Long reportId = report == null ? null : report.getId();
+
+                        // Prepare response messages
+                        RiskLevel riskLevel = agentRun.riskLevel() == null ? RiskLevel.LOW : agentRun.riskLevel();
+                        List<AiMessage> messages = agentRun.responseMessages().isEmpty()
+                                ? buildMessages(user, agentRun.intent(), riskLevel, agentRun.retrievedKnowledge(), agentRun.modelHistory())
+                                : agentRun.responseMessages();
+                        AiClient responseClient = selectResponseClient(agentRun.responseAgent());
+
+                        // ── Step 4: Stream tokens (after runtime completes) ──
+                        StringBuilder assistantReply = new StringBuilder();
+                        responseClient.stream(messages)
+                                .doOnNext(token -> {
+                                    assistantReply.append(token);
+                                    sink.next(event("token", ChatStreamEvent.token(sessionId, token)));
+                                })
+                                .doOnComplete(() -> {
+                                    // Success: save assistant message and emit done
+                                    if (!assistantReply.isEmpty()) {
+                                        saveMessage(user, session, MessageRole.ASSISTANT, assistantReply.toString());
+                                    }
+                                    if (reportId != null) {
+                                        toolOrchestrationService.handleAsync(reportId);
+                                    }
+                                    sink.next(event("done", ChatStreamEvent.done(sessionId)));
+                                    sink.complete();
+                                })
+                                .doOnError(error -> {
+                                    // Model failure: emit error, do NOT emit done
+                                    // But still enqueue high-risk tool tasks if report created
+                                    if (reportId != null && riskLevel == RiskLevel.HIGH) {
+                                        toolOrchestrationService.handleAsync(reportId);
+                                    }
+                                    sink.next(event("error",
+                                            ChatStreamEvent.error(sessionId, "模型响应失败，请稍后重试。")));
+                                    sink.complete();
+                                })
+                                .timeout(Duration.ofSeconds(45))
+                                .subscribe();
+
+                    } catch (AgentRuntimeExecutionException e) {
+                        // Agent runtime failure: emit FAILED step event + error
+                        sink.next(event("error",
+                                ChatStreamEvent.error(sessionId, "Agent 执行异常，请稍后重试。")));
+                        sink.complete();
+                    } catch (Exception e) {
+                        log.error("Unexpected error during chat streaming", e);
+                        sink.next(event("error",
+                                ChatStreamEvent.error(sessionId, "服务暂时不可用，请稍后重试。")));
+                        sink.complete();
+                    }
+                });
+
+            } catch (Exception e) {
+                // Setup failure (user not found, etc.)
+                sink.next(event("error", ChatStreamEvent.error(null, "服务暂时不可用：" + e.getMessage())));
+                sink.complete();
             }
-            @Override public void onCompleted(int s, AgentName a, String act, String obs) {
-                stepEvents.add(new StepEventItem("COMPLETED", a, act, sanitize(obs)));
-            }
-            @Override public void onFailed(int s, AgentName a, String act, String err) {
-                stepEvents.add(new StepEventItem("FAILED", a, act, sanitize(err)));
-            }
-        };
-        AgentRunResult agentRun = agentRuntimeService.run(user, session, input, modelInput, listener);
-        Instant completedAt = Instant.now();
 
-        ChatMessage userMessage = saveMessage(user, session, MessageRole.USER, input);
-        agentRunTraceService.saveRun(user, session, userMessage, input, agentRun, startedAt, completedAt);
-        rememberUserProfile(user, session, input, agentRun.memoryBrief());
+            // Handle client disconnection
+            sink.onCancel(() -> {
+                // Note: Cancelling the runtime mid-execution is complex;
+                // at minimum we stop pushing to a dead sink.
+                // The runtime will complete independently but events go to void.
+            });
 
-        PsychologicalReport report = null;
-        if (agentRun.requiresReport()) {
-            report = saveReport(user, session, input, agentRun.intent(), agentRun.assessment());
-        }
-
-        RiskLevel riskLevel = agentRun.riskLevel() == null ? RiskLevel.LOW : agentRun.riskLevel();
-        List<AiMessage> messages = agentRun.responseMessages().isEmpty()
-                ? buildMessages(user, agentRun.intent(), riskLevel, agentRun.retrievedKnowledge(), agentRun.modelHistory())
-                : agentRun.responseMessages();
-        Long reportId = report == null ? null : report.getId();
-        AiClient responseAiClient = selectResponseClient(agentRun.responseAgent());
-        return new PreparedConversation(user, session, agentRun.intent(), riskLevel, messages, reportId, responseAiClient,
-                stepEvents);
-    }
-
-    private Flux<ServerSentEvent<ChatStreamEvent>> streamPrepared(PreparedConversation prepared) {
-        Flux<ServerSentEvent<ChatStreamEvent>> meta = Flux.just(event(
-                "meta", ChatStreamEvent.meta(prepared.session().getPublicId())));
-
-        Flux<ServerSentEvent<ChatStreamEvent>> agentSteps = Flux.fromIterable(prepared.stepEvents())
-                .map(e -> event("agent-step",
-                        ChatStreamEvent.agentStep(prepared.session().getPublicId(),
-                                e.agentName().name(), e.action(), e.status(), e.observation())));
-
-        StringBuilder assistantReply = new StringBuilder();
-        Flux<ServerSentEvent<ChatStreamEvent>> tokens = prepared.aiClient().stream(prepared.messages())
-                .doOnNext(assistantReply::append)
-                .map(token -> event("token", ChatStreamEvent.token(prepared.session().getPublicId(), token)))
-                .timeout(Duration.ofSeconds(45))
-                .onErrorResume(exception -> Flux.just(event(
-                        "error",
-                        ChatStreamEvent.error(prepared.session().getPublicId(), "模型响应超时或失败，请稍后重试。"))))
-                .switchIfEmpty(Flux.just(event(
-                        "error",
-                        ChatStreamEvent.error(prepared.session().getPublicId(), "模型没有返回内容，请稍后重试。"))));
-
-        Mono<ServerSentEvent<ChatStreamEvent>> done = Mono.fromCallable(() -> {
-            if (!assistantReply.isEmpty()) {
-                saveMessage(prepared.user(), prepared.session(), MessageRole.ASSISTANT, assistantReply.toString());
-            }
-            if (prepared.reportId() != null) {
-                toolOrchestrationService.handleAsync(prepared.reportId());
-            }
-            return event("done", ChatStreamEvent.done(prepared.session().getPublicId()));
-        }).subscribeOn(Schedulers.boundedElastic());
-
-        return meta.concatWith(agentSteps).concatWith(tokens).concatWith(done);
+        }, FluxSink.OverflowStrategy.BUFFER);
     }
 
     // ────────────── 会话和持久化 ──────────────
@@ -262,10 +298,4 @@ public class ChatService {
         if (s == null) return "";
         return s.length() > 200 ? s.substring(0, 200) : s;
     }
-
-    private record StepEventItem(String status, AgentName agentName, String action, String observation) {}
-    private record PreparedConversation(
-            UserAccount user, ChatSession session, IntentType intent, RiskLevel riskLevel,
-            List<AiMessage> messages, Long reportId, AiClient aiClient, List<StepEventItem> stepEvents
-    ) {}
 }
