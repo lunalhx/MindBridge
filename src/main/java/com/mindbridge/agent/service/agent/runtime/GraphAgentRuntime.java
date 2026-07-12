@@ -107,7 +107,8 @@ public class GraphAgentRuntime implements AgentRuntime {
     }
 
     @Override
-    public AgentRunResult run(UserAccount user, ChatSession session, String originalInput, String modelInput) {
+    public AgentRunResult run(UserAccount user, ChatSession session, String originalInput, String modelInput,
+                               AgentStepListener listener) {
         AgentContext context = new AgentContext(user, session, originalInput, modelInput);
 
         AgentName current = graph.entry();
@@ -119,22 +120,31 @@ public class GraphAgentRuntime implements AgentRuntime {
                         RuntimeMode.GRAPH, context);
             }
 
-            AgentDecision decision = agent.act(context);
-            context.addStep(AgentStep.of(step, current, decision));
+            String action = "";
+            listener.onStarted(step, current, action);
+            try {
+                AgentDecision decision = agent.act(context);
+                action = decision.action() != null ? decision.action().name() : "";
+                context.addStep(AgentStep.of(step, current, decision));
+                listener.onCompleted(step, current, action,
+                        SequentialAgentRuntime.sanitizeObservation(decision.observation()));
 
-            if (decision.complete()) {
-                context.finish();
-                return AgentRunResult.from(context);
-            }
+                if (decision.complete()) {
+                    context.finish();
+                    return AgentRunResult.from(context);
+                }
 
-            // 评估出边，选择第一个满足条件的
-            AgentName next = selectNext(context, current);
-            if (next == null) {
-                // 无匹配边 → 终点节点
-                context.finish();
-                return AgentRunResult.from(context);
+                AgentName next = selectNext(context, current);
+                if (next == null) {
+                    context.finish();
+                    return AgentRunResult.from(context);
+                }
+                current = next;
+            } catch (Exception e) {
+                listener.onFailed(step, current, action,
+                        SequentialAgentRuntime.sanitizeObservation(e.getMessage()));
+                throw e;
             }
-            current = next;
         }
 
         throw new AgentRuntimeExecutionException(

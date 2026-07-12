@@ -72,7 +72,8 @@ public class EventDrivenAgentRuntime implements AgentRuntime {
     }
 
     @Override
-    public AgentRunResult run(UserAccount user, ChatSession session, String originalInput, String modelInput) {
+    public AgentRunResult run(UserAccount user, ChatSession session, String originalInput, String modelInput,
+                               AgentStepListener listener) {
         AgentContext context = new AgentContext(user, session, originalInput, modelInput);
         int revisions = 0;
 
@@ -82,12 +83,10 @@ public class EventDrivenAgentRuntime implements AgentRuntime {
             // 1. 推导待办任务
             List<AgentTask> tasks = deriveTasks(board);
             if (tasks.isEmpty()) {
-                // 所有必需 artifact 已存在，检查安全门禁
                 if (safetyGatePassed(board)) {
                     context.finish();
                     return AgentRunResult.from(context);
                 }
-                // 安全门禁未通过 → 创建 revision 任务
                 if (revisions >= maxRevisions) {
                     throw new AgentRuntimeExecutionException(
                             "Event-driven runtime exhausted max revisions (" + maxRevisions
@@ -98,7 +97,6 @@ public class EventDrivenAgentRuntime implements AgentRuntime {
                 tasks = List.of(revisionTask(board));
             }
 
-            // 2. 为每个任务寻找最佳候选并执行（每轮只执行第一个待办任务）
             AgentTask task = tasks.get(0);
             Candidate selected = selectCandidate(board, task);
             if (selected == null) {
@@ -108,12 +106,16 @@ public class EventDrivenAgentRuntime implements AgentRuntime {
                         RuntimeMode.EVENT_DRIVEN, context);
             }
 
-            // 3. 执行选中的 Agent
             MindBridgeAgent agent = registry.profile(selected.agentName()).agent();
+            int step = context.steps().size() + 1;
+            String action = selected.capability().name();
+            listener.onStarted(step, selected.agentName(), action);
             AgentDecision decision;
             try {
                 decision = agent.act(context);
             } catch (Exception e) {
+                listener.onFailed(step, selected.agentName(), action,
+                        SequentialAgentRuntime.sanitizeObservation(e.getMessage()));
                 context.blackboard().addEvent(new AgentEvent(
                         "AGENT_EXECUTION_ERROR", selected.agentName(),
                         "Agent 执行异常: " + e.getClass().getSimpleName()));
@@ -123,10 +125,10 @@ public class EventDrivenAgentRuntime implements AgentRuntime {
                         RuntimeMode.EVENT_DRIVEN, context);
             }
 
-            int step = context.steps().size() + 1;
             context.addStep(AgentStep.of(step, selected.agentName(), decision));
+            listener.onCompleted(step, selected.agentName(), action,
+                    SequentialAgentRuntime.sanitizeObservation(decision.observation()));
 
-            // 4. 应用 decision artifacts 到 blackboard
             if (decision.artifacts() != null) {
                 for (AgentArtifact artifact : decision.artifacts()) {
                     context.blackboard().addArtifact(artifact);
@@ -138,7 +140,6 @@ public class EventDrivenAgentRuntime implements AgentRuntime {
                     context.finish();
                     return AgentRunResult.from(context);
                 }
-                // complete 但安全门禁未通过 → revision
                 if (revisions >= maxRevisions) {
                     throw new AgentRuntimeExecutionException(
                             "Event-driven runtime exhausted max revisions after agent completion",

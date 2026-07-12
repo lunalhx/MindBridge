@@ -32,14 +32,25 @@ public class SequentialAgentRuntime implements AgentRuntime {
     }
 
     @Override
-    public AgentRunResult run(UserAccount user, ChatSession session, String originalInput, String modelInput) {
+    public AgentRunResult run(UserAccount user, ChatSession session, String originalInput, String modelInput,
+                               AgentStepListener listener) {
         AgentContext context = new AgentContext(user, session, originalInput, modelInput);
         for (int step = 1; step <= MAX_STEPS && !context.finished(); step++) {
             MindBridgeAgent agent = nextAgent(context);
-            AgentDecision decision = agent.act(context);
-            context.addStep(AgentStep.of(step, agent.name(), decision));
-            if (decision.complete()) {
-                context.finish();
+            String action = "";
+            listener.onStarted(step, agent.name(), action);
+            try {
+                AgentDecision decision = agent.act(context);
+                action = decision.action() != null ? decision.action().name() : "";
+                context.addStep(AgentStep.of(step, agent.name(), decision));
+                listener.onCompleted(step, agent.name(), action,
+                        sanitizeObservation(decision.observation()));
+                if (decision.complete()) {
+                    context.finish();
+                }
+            } catch (Exception e) {
+                listener.onFailed(step, agent.name(), action, sanitizeObservation(e.getMessage()));
+                throw e;
             }
         }
 
@@ -61,5 +72,10 @@ public class SequentialAgentRuntime implements AgentRuntime {
                         "No agent can handle current context state",
                         RuntimeMode.SEQUENTIAL,
                         context));
+    }
+
+    static String sanitizeObservation(String observation) {
+        if (observation == null) return "";
+        return observation.length() > 200 ? observation.substring(0, 200) : observation;
     }
 }

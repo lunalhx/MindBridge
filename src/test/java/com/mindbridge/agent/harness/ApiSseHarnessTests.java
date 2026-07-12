@@ -81,30 +81,37 @@ class ApiSseHarnessTests {
 
         assertThat(body)
                 .contains("event:meta")
+                .contains("event:agent-step")
+                .contains("COMPLETED")
                 .contains("event:token")
                 .contains("event:done")
                 .contains("这是一个稳定的测试回复。");
-        assertThat(reportRepository.findAll()).isEmpty();
-        assertThat(traceRepository.findAll()).singleElement()
-                .satisfies(trace -> {
-                    assertThat(trace.getIntent().name()).isEqualTo("CHAT");
-                    assertThat(trace.getStepCount()).isEqualTo(3);
-                });
-    }
+        assertThat(countAgentSteps(body)).isEqualTo(6); // 3 agents × 2 events (STARTED + COMPLETED)
 
-    @Test
-    void highRiskChatPersistsReportTraceAndTriggersToolChainAfterSse() {
-        String body = postChat("student", "student123", "我不想活了，想伤害自己，今晚可能撑不住。");
+            assertThat(reportRepository.findAll()).isEmpty();
+            assertThat(traceRepository.findAll()).singleElement()
+                    .satisfies(trace -> {
+                        assertThat(trace.getIntent().name()).isEqualTo("CHAT");
+                        assertThat(trace.getStepCount()).isEqualTo(3);
+                    });
+        }
 
-        assertThat(body)
-                .contains("event:meta")
-                .contains("event:token")
-                .contains("event:done")
-                .contains("先确保安全")
-                .doesNotContain("风险等级")
-                .doesNotContain("Excel")
-                .doesNotContain("MCP")
-                .doesNotContain("报告");
+        @Test
+        void highRiskChatPersistsReportTraceAndTriggersToolChainAfterSse() {
+            String body = postChat("student", "student123", "我不想活了，想伤害自己，今晚可能撑不住。");
+
+            assertThat(body)
+                    .contains("event:meta")
+                    .contains("event:agent-step")
+                    .contains("COMPLETED")
+                    .contains("event:token")
+                    .contains("event:done")
+                    .contains("先确保安全")
+                    .doesNotContain("风险等级")
+                    .doesNotContain("Excel")
+                    .doesNotContain("MCP")
+                    .doesNotContain("报告");
+            assertThat(countAgentSteps(body)).isEqualTo(10); // 5 agents × 2 events (STARTED + COMPLETED)
 
         assertThat(reportRepository.findAll()).singleElement()
                 .satisfies(report -> {
@@ -150,5 +157,16 @@ class ApiSseHarnessTests {
                 .expectBody(String.class)
                 .returnResult();
         return result.getResponseBody() == null ? "" : result.getResponseBody();
+    }
+
+    private long countAgentSteps(String body) {
+        String pattern = "event:agent-step";
+        int count = 0;
+        int idx = 0;
+        while ((idx = body.indexOf(pattern, idx)) != -1) {
+            count++;
+            idx += pattern.length();
+        }
+        return count;
     }
 }

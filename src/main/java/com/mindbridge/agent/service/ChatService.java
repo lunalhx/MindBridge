@@ -16,12 +16,14 @@ import com.mindbridge.agent.repository.PsychologicalReportRepository;
 import com.mindbridge.agent.repository.UserAccountRepository;
 import com.mindbridge.agent.service.ai.AiClient;
 import com.mindbridge.agent.service.ai.AiMessage;
+import com.mindbridge.agent.service.ai.AgentModelRegistry;
 import com.mindbridge.agent.service.ai.PromptTemplates;
-import com.mindbridge.agent.service.knowledge.SearchResult;
 import com.mindbridge.agent.service.agent.AgentRunResult;
 import com.mindbridge.agent.service.agent.AgentRuntimeService;
 import com.mindbridge.agent.service.agent.AgentName;
-import com.mindbridge.agent.service.ai.AgentModelRegistry;
+import com.mindbridge.agent.service.agent.AgentStep;
+import com.mindbridge.agent.service.agent.runtime.AgentStepListener;
+import com.mindbridge.agent.service.knowledge.SearchResult;
 import com.mindbridge.agent.service.memory.ShortTermMemoryService;
 import com.mindbridge.agent.service.memory.UserProfileMemoryService;
 import java.time.Duration;
@@ -41,8 +43,8 @@ import reactor.core.scheduler.Schedulers;
 /**
  * 学生聊天主流程服务。
  *
- * <p>负责会话落库、模型流式调用和后台报告触发；意图路由、记忆读取、RAG 与风险评估
- * 由 AgentRuntimeService 中的多 Agent loop 完成。</p>
+ * <p>批次 12 后，SSE 事件顺序：meta → agent-step × N → token → done。
+ * Agent 步骤事件从 Runtime 同步执行期间收集，作为 Flux 在 token 前发射。</p>
  */
 public class ChatService {
 
@@ -93,7 +95,6 @@ public class ChatService {
     }
 
     public Flux<ServerSentEvent<ChatStreamEvent>> streamChat(Long userId, ChatRequest request) {
-        // 聊天接口使用 SSE 流式返回；数据库读写放到 boundedElastic，避免阻塞响应线程。
         return Mono.fromCallable(() -> prepare(userId, request))
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMapMany(this::streamPrepared)
@@ -109,8 +110,22 @@ public class ChatService {
                 .orElseThrow(() -> new IllegalArgumentException("User not found"));
         ChatSession session = resolveSession(user, request.sessionId(), input);
         Instant startedAt = Instant.now();
-        AgentRunResult agentRun = agentRuntimeService.run(user, session, input, modelInput);
+
+        List<StepEventItem> stepEvents = new ArrayList<>();
+        AgentStepListener listener = new AgentStepListener() {
+            @Override public void onStarted(int s, AgentName a, String act) {
+                stepEvents.add(new StepEventItem("STARTED", a, act, ""));
+            }
+            @Override public void onCompleted(int s, AgentName a, String act, String obs) {
+                stepEvents.add(new StepEventItem("COMPLETED", a, act, sanitize(obs)));
+            }
+            @Override public void onFailed(int s, AgentName a, String act, String err) {
+                stepEvents.add(new StepEventItem("FAILED", a, act, sanitize(err)));
+            }
+        };
+        AgentRunResult agentRun = agentRuntimeService.run(user, session, input, modelInput, listener);
         Instant completedAt = Instant.now();
+
         ChatMessage userMessage = saveMessage(user, session, MessageRole.USER, input);
         agentRunTraceService.saveRun(user, session, userMessage, input, agentRun, startedAt, completedAt);
         rememberUserProfile(user, session, input, agentRun.memoryBrief());
@@ -126,15 +141,20 @@ public class ChatService {
                 : agentRun.responseMessages();
         Long reportId = report == null ? null : report.getId();
         AiClient responseAiClient = selectResponseClient(agentRun.responseAgent());
-        return new PreparedConversation(user, session, agentRun.intent(), riskLevel, messages, reportId, responseAiClient);
+        return new PreparedConversation(user, session, agentRun.intent(), riskLevel, messages, reportId, responseAiClient,
+                stepEvents);
     }
 
     private Flux<ServerSentEvent<ChatStreamEvent>> streamPrepared(PreparedConversation prepared) {
-        StringBuilder assistantReply = new StringBuilder();
         Flux<ServerSentEvent<ChatStreamEvent>> meta = Flux.just(event(
-                "meta",
-                ChatStreamEvent.meta(prepared.session().getPublicId())));
+                "meta", ChatStreamEvent.meta(prepared.session().getPublicId())));
 
+        Flux<ServerSentEvent<ChatStreamEvent>> agentSteps = Flux.fromIterable(prepared.stepEvents())
+                .map(e -> event("agent-step",
+                        ChatStreamEvent.agentStep(prepared.session().getPublicId(),
+                                e.agentName().name(), e.action(), e.status(), e.observation())));
+
+        StringBuilder assistantReply = new StringBuilder();
         Flux<ServerSentEvent<ChatStreamEvent>> tokens = prepared.aiClient().stream(prepared.messages())
                 .doOnNext(assistantReply::append)
                 .map(token -> event("token", ChatStreamEvent.token(prepared.session().getPublicId(), token)))
@@ -150,15 +170,16 @@ public class ChatService {
             if (!assistantReply.isEmpty()) {
                 saveMessage(prepared.user(), prepared.session(), MessageRole.ASSISTANT, assistantReply.toString());
             }
-            // 工具链在模型回复完成后异步执行，不打断学生端正在进行的对话体验。
             if (prepared.reportId() != null) {
                 toolOrchestrationService.handleAsync(prepared.reportId());
             }
             return event("done", ChatStreamEvent.done(prepared.session().getPublicId()));
         }).subscribeOn(Schedulers.boundedElastic());
 
-        return meta.concatWith(tokens).concatWith(done);
+        return meta.concatWith(agentSteps).concatWith(tokens).concatWith(done);
     }
+
+    // ────────────── 会话和持久化 ──────────────
 
     private ChatSession resolveSession(UserAccount user, String publicId, String input) {
         if (publicId != null && !publicId.isBlank()) {
@@ -194,12 +215,8 @@ public class ChatService {
     }
 
     private PsychologicalReport saveReport(
-            UserAccount user,
-            ChatSession session,
-            String content,
-            IntentType intent,
-            PsychologyAssessment assessment
-    ) {
+            UserAccount user, ChatSession session, String content,
+            IntentType intent, PsychologyAssessment assessment) {
         PsychologicalReport report = new PsychologicalReport();
         report.setUser(user);
         report.setSession(session);
@@ -213,12 +230,6 @@ public class ChatService {
         return reportRepository.save(report);
     }
 
-    /**
-     * 选择负责回复的 Agent 对应的 AiClient。
-     *
-     * <p>如果 AgentModelRegistry 有该 Agent 的 override，使用其专属客户端；
-     * 否则回退到默认 AiClient。</p>
-     */
     private AiClient selectResponseClient(AgentName responseAgent) {
         if (responseAgent != null && agentModelRegistry != null
                 && agentModelRegistry.hasOverride(responseAgent)) {
@@ -228,28 +239,18 @@ public class ChatService {
     }
 
     private List<AiMessage> buildMessages(
-            UserAccount user,
-            IntentType intent,
-            RiskLevel riskLevel,
-            List<SearchResult> retrieved,
-            List<AiMessage> history
-    ) {
-        // 检索片段只作为系统上下文给模型使用，不直接展示后台评估信息给学生。
+            UserAccount user, IntentType intent, RiskLevel riskLevel,
+            List<SearchResult> retrieved, List<AiMessage> history) {
         String context = String.join("\n\n", retrieved.stream()
-                .map(result -> "- [" + result.source() + "] " + result.content())
-                .toList());
+                .map(result -> "- [" + result.source() + "] " + result.content()).toList());
         List<AiMessage> messages = new ArrayList<>();
         messages.add(PromptTemplates.answerSystemPrompt(intent, riskLevel, context, user.getDisplayName()));
-
         int limit = messageWindowLimit();
-        history.stream()
-                .skip(Math.max(0, history.size() - limit))
-                .forEach(messages::add);
+        history.stream().skip(Math.max(0, history.size() - limit)).forEach(messages::add);
         return messages;
     }
 
     private int messageWindowLimit() {
-        // history-limit 以轮次理解，这里乘 2 保留用户和助手两侧消息。
         return Math.max(2, properties.getChat().getHistoryLimit() * 2);
     }
 
@@ -257,14 +258,14 @@ public class ChatService {
         return ServerSentEvent.builder(data).event(name).build();
     }
 
-    private record PreparedConversation(
-            UserAccount user,
-            ChatSession session,
-            IntentType intent,
-            RiskLevel riskLevel,
-            List<AiMessage> messages,
-            Long reportId,
-            AiClient aiClient
-    ) {
+    static String sanitize(String s) {
+        if (s == null) return "";
+        return s.length() > 200 ? s.substring(0, 200) : s;
     }
+
+    private record StepEventItem(String status, AgentName agentName, String action, String observation) {}
+    private record PreparedConversation(
+            UserAccount user, ChatSession session, IntentType intent, RiskLevel riskLevel,
+            List<AiMessage> messages, Long reportId, AiClient aiClient, List<StepEventItem> stepEvents
+    ) {}
 }

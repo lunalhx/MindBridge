@@ -4,6 +4,7 @@ import com.mindbridge.agent.domain.ChatSession;
 import com.mindbridge.agent.domain.UserAccount;
 import com.mindbridge.agent.service.agent.runtime.AgentRuntime;
 import com.mindbridge.agent.service.agent.runtime.AgentRuntimeFactory;
+import com.mindbridge.agent.service.agent.runtime.AgentStepListener;
 import com.mindbridge.agent.service.agent.runtime.SequentialAgentRuntime;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -64,6 +65,11 @@ public class AgentRuntimeService {
     }
 
     public AgentRunResult run(UserAccount user, ChatSession session, String originalInput, String modelInput) {
-        return runtime.run(user, session, originalInput, modelInput);
+        return runtime.run(user, session, originalInput, modelInput, AgentStepListener.NOOP);
+    }
+
+    public AgentRunResult run(UserAccount user, ChatSession session, String originalInput, String modelInput,
+                               AgentStepListener listener) {
+        return runtime.run(user, session, originalInput, modelInput, listener);
     }
 }
