@@ -1,8 +1,9 @@
 package com.mindbridge.agent.service.agent;
 
 import com.mindbridge.agent.domain.IntentType;
-import com.mindbridge.agent.service.ai.AiClient;
+import com.mindbridge.agent.domain.RiskLevel;
 import com.mindbridge.agent.service.ai.AiMessage;
+import com.mindbridge.agent.service.ai.AgentModelRegistry;
 import com.mindbridge.agent.service.ai.PromptTemplates;
 import com.mindbridge.agent.service.agent.blackboard.AgentArtifact;
 import com.mindbridge.agent.service.agent.blackboard.AgentBlackboard;
@@ -27,18 +28,18 @@ public class CounselorAgent implements MindBridgeAgent {
 
     private static final Logger log = LoggerFactory.getLogger(CounselorAgent.class);
 
-    private final AiClient aiClient;
+    private final AgentModelRegistry agentModelRegistry;
     private final SkillRegistry skillRegistry;
 
     @Autowired
-    public CounselorAgent(AiClient aiClient, SkillRegistry skillRegistry) {
-        this.aiClient = aiClient;
+    public CounselorAgent(AgentModelRegistry agentModelRegistry, SkillRegistry skillRegistry) {
+        this.agentModelRegistry = agentModelRegistry;
         this.skillRegistry = skillRegistry;
     }
 
     /** 测试兼容构造：不注入 SkillRegistry，技能注入跳过。 */
-    public CounselorAgent(AiClient aiClient) {
-        this(aiClient, null);
+    public CounselorAgent(AgentModelRegistry agentModelRegistry) {
+        this(agentModelRegistry, null);
     }
 
     @Override
@@ -89,7 +90,7 @@ public class CounselorAgent implements MindBridgeAgent {
 
     private String planResponse(AgentContext context) {
         try {
-            String plan = aiClient.complete(List.of(
+            String plan = this.agentModelRegistry.clientFor(AgentName.COUNSELOR_AGENT).complete(List.of(
                     AiMessage.system("""
                             你是 MindBridge 的 CounselorAgent。
                             你负责心理支持式回应策略，不直接给诊断。

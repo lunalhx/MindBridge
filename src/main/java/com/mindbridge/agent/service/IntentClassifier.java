@@ -34,6 +34,17 @@ public class IntentClassifier {
     }
 
     public IntentType classify(String input, List<AiMessage> history) {
+        return classify(input, history, this.aiClient);
+    }
+
+    /**
+     * 使用指定的 AiClient 进行意图分类。
+     *
+     * <p>Per-agent 模型覆盖场景使用此重载，由调用方通过
+     * {@link com.mindbridge.agent.service.ai.AgentModelRegistry#clientFor(
+     * com.mindbridge.agent.service.agent.AgentName)} 获取对应 Agent 的客户端后传入。</p>
+     */
+    public IntentType classify(String input, List<AiMessage> history, AiClient client) {
         String normalized = input.toLowerCase(Locale.ROOT);
         // 高风险表达优先级最高，不交给普通任务规则覆盖。
         if (RiskLexicon.hasHighRiskSignal(normalized)) {
@@ -44,7 +55,7 @@ public class IntentClassifier {
             return IntentType.CHAT;
         }
         try {
-            String label = aiClient.complete(PromptTemplates.intentPrompt(history, input)).trim().toUpperCase();
+            String label = client.complete(PromptTemplates.intentPrompt(history, input)).trim().toUpperCase();
             if (label.contains("RISK")) {
                 return IntentType.RISK;
             }

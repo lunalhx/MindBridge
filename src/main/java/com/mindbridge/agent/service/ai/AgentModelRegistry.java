@@ -4,15 +4,8 @@ import com.mindbridge.agent.config.MindBridgeProperties;
 import com.mindbridge.agent.service.agent.AgentName;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.ollama.OllamaChatModel;
-import org.springframework.ai.ollama.api.OllamaApi;
-import org.springframework.ai.ollama.api.OllamaOptions;
-import org.springframework.ai.openai.OpenAiChatModel;
-import org.springframework.ai.openai.OpenAiChatOptions;
-import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.stereotype.Service;
 
 /**
@@ -21,8 +14,8 @@ import org.springframework.stereotype.Service;
  * <p>管理 default profile 和 per-agent overrides，按 profile 懒加载并缓存 AiClient。
  * 未配置 override 的 Agent 使用 default profile（复用现有 AiClient bean 或按 default 配置创建）。</p>
  *
- * <p>缓存策略：相同 provider+model+temperature+maxTokens 的 profile 复用同一个 AiClient 实例，
- * 避免重复创建底层连接资源。</p>
+ * <p>Phase 2 后，客户端创建统一委托给 {@link AiClientFactory}，保证 override 客户端
+ * 也应用 {@link ResilientAiClient} 弹性包装，并与默认 AiClient 使用相同的缓存策略。</p>
  */
 @Service
 public class AgentModelRegistry {
@@ -31,15 +24,14 @@ public class AgentModelRegistry {
 
     private final MindBridgeProperties properties;
     private final AiClient defaultClient;
+    private final AiClientFactory aiClientFactory;
     private final AgentModelProfile defaultProfile;
     private final Map<AgentName, AgentModelProfile> overrideProfiles;
 
-    /** profile key → AiClient 缓存 */
-    private final Map<String, AiClient> clientCache = new ConcurrentHashMap<>();
-
-    public AgentModelRegistry(MindBridgeProperties properties, AiClient defaultClient) {
+    public AgentModelRegistry(MindBridgeProperties properties, AiClient defaultClient, AiClientFactory aiClientFactory) {
         this.properties = properties;
         this.defaultClient = defaultClient;
+        this.aiClientFactory = aiClientFactory;
         this.defaultProfile = AgentModelProfile.fromDefault(properties.getAi());
         this.overrideProfiles = buildOverrideProfiles();
     }
@@ -55,7 +47,7 @@ public class AgentModelRegistry {
         if (profile == null) {
             return defaultClient;
         }
-        return clientForProfile(profile);
+        return aiClientFactory.createClient(profile);
     }
 
     /**
@@ -70,65 +62,6 @@ public class AgentModelRegistry {
      */
     public boolean hasOverride(AgentName agentName) {
         return overrideProfiles.containsKey(agentName);
-    }
-
-    private AiClient clientForProfile(AgentModelProfile profile) {
-        String cacheKey = profile.provider() + ":" + profile.model() + ":"
-                + profile.temperature() + ":" + profile.maxTokens();
-        return clientCache.computeIfAbsent(cacheKey, k -> createClient(profile));
-    }
-
-    private AiClient createClient(AgentModelProfile profile) {
-        String provider = profile.provider();
-        if ("ollama".equals(provider)) {
-            return createOllamaClient(profile);
-        }
-        if ("openai".equals(provider)) {
-            return createOpenAiClient(profile);
-        }
-        throw new IllegalArgumentException("Unsupported provider: " + provider);
-    }
-
-    private AiClient createOllamaClient(AgentModelProfile profile) {
-        MindBridgeProperties.Ollama ollama = properties.getAi().getOllama();
-        OllamaApi api = OllamaApi.builder()
-                .baseUrl(ollama.getBaseUrl())
-                .build();
-        OllamaOptions options = OllamaOptions.builder()
-                .model(profile.model())
-                .temperature(profile.temperature())
-                .numPredict(profile.maxTokens())
-                .topP(0.85)
-                .repeatPenalty(1.12)
-                .build();
-        OllamaChatModel model = OllamaChatModel.builder()
-                .ollamaApi(api)
-                .defaultOptions(options)
-                .build();
-        return new SpringAiChatClient(model, model);
-    }
-
-    private AiClient createOpenAiClient(AgentModelProfile profile) {
-        MindBridgeProperties.OpenAi openai = properties.getAi().getOpenai();
-        if (openai.getApiKey().isBlank()) {
-            throw new IllegalStateException(
-                    "Agent override with provider=openai requires OPENAI_API_KEY to be set. "
-                            + "Configure mindbridge.ai.openai.api-key or OPENAI_API_KEY env var.");
-        }
-        OpenAiApi api = OpenAiApi.builder()
-                .baseUrl(openai.getBaseUrl())
-                .apiKey(openai.getApiKey())
-                .build();
-        OpenAiChatOptions options = OpenAiChatOptions.builder()
-                .model(profile.model())
-                .temperature(profile.temperature())
-                .maxTokens(profile.maxTokens())
-                .build();
-        OpenAiChatModel model = OpenAiChatModel.builder()
-                .openAiApi(api)
-                .defaultOptions(options)
-                .build();
-        return new SpringAiChatClient(model, model);
     }
 
     /**

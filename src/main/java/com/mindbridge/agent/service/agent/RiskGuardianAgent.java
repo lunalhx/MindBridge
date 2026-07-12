@@ -4,6 +4,7 @@ import com.mindbridge.agent.domain.IntentType;
 import com.mindbridge.agent.domain.RiskLevel;
 import com.mindbridge.agent.service.PsychologicalAssessmentService;
 import com.mindbridge.agent.service.PsychologyAssessment;
+import com.mindbridge.agent.service.ai.AgentModelRegistry;
 import com.mindbridge.agent.service.agent.blackboard.AgentArtifact;
 import com.mindbridge.agent.service.agent.blackboard.AgentBlackboard;
 import com.mindbridge.agent.service.agent.blackboard.AgentFlag;
@@ -20,9 +21,11 @@ import org.springframework.stereotype.Component;
 public class RiskGuardianAgent implements MindBridgeAgent {
 
     private final PsychologicalAssessmentService assessmentService;
+    private final AgentModelRegistry agentModelRegistry;
 
-    public RiskGuardianAgent(PsychologicalAssessmentService assessmentService) {
+    public RiskGuardianAgent(PsychologicalAssessmentService assessmentService, AgentModelRegistry agentModelRegistry) {
         this.assessmentService = assessmentService;
+        this.agentModelRegistry = agentModelRegistry;
     }
 
     @Override
@@ -61,7 +64,10 @@ public class RiskGuardianAgent implements MindBridgeAgent {
 
     @Override
     public AgentDecision act(AgentContext context) {
-        PsychologyAssessment assessment = assessmentService.assess(context.modelInput(), context.modelHistory());
+        PsychologyAssessment assessment = assessmentService.assess(
+                context.modelInput(),
+                context.modelHistory(),
+                agentModelRegistry.clientFor(AgentName.RISK_GUARDIAN_AGENT));
         if (context.intent() == IntentType.RISK && assessment.risk() != RiskLevel.HIGH) {
             assessment = new PsychologyAssessment(
                     assessment.emotion(),

@@ -6,8 +6,8 @@ import com.mindbridge.agent.domain.ChatSession;
 import com.mindbridge.agent.domain.MessageRole;
 import com.mindbridge.agent.repository.ChatMessageRepository;
 import com.mindbridge.agent.service.PrivacySanitizer;
-import com.mindbridge.agent.service.ai.AiClient;
 import com.mindbridge.agent.service.ai.AiMessage;
+import com.mindbridge.agent.service.ai.AgentModelRegistry;
 import com.mindbridge.agent.service.agent.blackboard.AgentBlackboard;
 import com.mindbridge.agent.service.agent.blackboard.AgentFlag;
 import com.mindbridge.agent.service.agent.registry.AgentCapability;
@@ -37,7 +37,7 @@ public class MemoryAgent implements MindBridgeAgent {
     private final ShortTermMemoryService shortTermMemoryService;
     private final MindBridgeProperties properties;
     private final PrivacySanitizer privacySanitizer;
-    private final AiClient aiClient;
+    private final AgentModelRegistry agentModelRegistry;
     private final UserProfileMemoryService userProfileMemoryService;
     private final AgentPrivateMemoryRegistry privateMemoryRegistry;
 
@@ -50,7 +50,7 @@ public class MemoryAgent implements MindBridgeAgent {
             ShortTermMemoryService shortTermMemoryService,
             MindBridgeProperties properties,
             PrivacySanitizer privacySanitizer,
-            AiClient aiClient,
+            AgentModelRegistry agentModelRegistry,
             UserProfileMemoryService userProfileMemoryService,
             AgentPrivateMemoryRegistry privateMemoryRegistry
     ) {
@@ -58,7 +58,7 @@ public class MemoryAgent implements MindBridgeAgent {
         this.shortTermMemoryService = shortTermMemoryService;
         this.properties = properties;
         this.privacySanitizer = privacySanitizer;
-        this.aiClient = aiClient;
+        this.agentModelRegistry = agentModelRegistry;
         this.userProfileMemoryService = userProfileMemoryService;
         this.privateMemoryRegistry = privateMemoryRegistry;
     }
@@ -71,11 +71,11 @@ public class MemoryAgent implements MindBridgeAgent {
             ShortTermMemoryService shortTermMemoryService,
             MindBridgeProperties properties,
             PrivacySanitizer privacySanitizer,
-            AiClient aiClient,
+            AgentModelRegistry agentModelRegistry,
             UserProfileMemoryService userProfileMemoryService
     ) {
         this(chatMessageRepository, shortTermMemoryService, properties,
-                privacySanitizer, aiClient, userProfileMemoryService, null);
+                privacySanitizer, agentModelRegistry, userProfileMemoryService, null);
     }
 
     @Override
@@ -159,7 +159,7 @@ public class MemoryAgent implements MindBridgeAgent {
             return "无相关历史记忆。";
         }
         try {
-            String summary = aiClient.complete(List.of(
+            String summary = agentModelRegistry.clientFor(AgentName.MEMORY_AGENT).complete(List.of(
                     AiMessage.system("""
                             你是 MindBridge 的 MemoryAgent。
                             你的任务是从最近对话中提取对当前输入有用的短期/长期记忆。

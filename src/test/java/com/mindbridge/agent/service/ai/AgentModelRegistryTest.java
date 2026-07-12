@@ -17,11 +17,17 @@ class AgentModelRegistryTest {
 
     private MindBridgeProperties properties;
     private AiClient defaultClient;
+    private AiClientFactory factory;
 
     @BeforeEach
     void setUp() {
         properties = new MindBridgeProperties();
         defaultClient = new StubAiClient("default-reply");
+        factory = new AiClientFactory(properties);
+    }
+
+    private AgentModelRegistry newRegistry() {
+        return new AgentModelRegistry(properties, defaultClient, factory);
     }
 
     // ────────── AgentModelProfile 校验 ──────────
@@ -96,7 +102,7 @@ class AgentModelRegistryTest {
 
     @Test
     void noOverridesShouldReturnDefaultClientForAllAgents() {
-        var registry = new AgentModelRegistry(properties, defaultClient);
+        var registry = newRegistry();
 
         for (AgentName name : AgentName.values()) {
             assertThat(registry.clientFor(name)).isSameAs(defaultClient);
@@ -106,7 +112,7 @@ class AgentModelRegistryTest {
 
     @Test
     void noOverridesShouldUseDefaultProfile() {
-        var registry = new AgentModelRegistry(properties, defaultClient);
+        var registry = newRegistry();
         var profile = registry.profileFor(AgentName.COUNSELOR_AGENT);
 
         assertThat(profile.provider()).isEqualTo("ollama");
@@ -126,7 +132,7 @@ class AgentModelRegistryTest {
         properties.getAgentModels().setOverrides(
                 Map.of("counselor", overrideConfig));
 
-        var registry = new AgentModelRegistry(properties, defaultClient);
+        var registry = newRegistry();
 
         assertThat(registry.hasOverride(AgentName.COUNSELOR_AGENT)).isTrue();
         assertThat(registry.hasOverride(AgentName.COMPANION_AGENT)).isFalse();
@@ -159,7 +165,7 @@ class AgentModelRegistryTest {
                 "counselor", cfg,
                 "companion", cfg)); // same profile for two agents
 
-        var registry = new AgentModelRegistry(properties, defaultClient);
+        var registry = newRegistry();
 
         AiClient counselorClient = registry.clientFor(AgentName.COUNSELOR_AGENT);
         AiClient companionClient = registry.clientFor(AgentName.COMPANION_AGENT);
@@ -187,7 +193,7 @@ class AgentModelRegistryTest {
                 "companion", cfg1,
                 "counselor", cfg2));
 
-        var registry = new AgentModelRegistry(properties, defaultClient);
+        var registry = newRegistry();
 
         AiClient companionClient = registry.clientFor(AgentName.COMPANION_AGENT);
         AiClient counselorClient = registry.clientFor(AgentName.COUNSELOR_AGENT);
@@ -211,7 +217,7 @@ class AgentModelRegistryTest {
         cfg.setMaxTokens(256);
         properties.getAgentModels().setOverrides(Map.of("risk-guardian", cfg));
 
-        var registry = new AgentModelRegistry(properties, defaultClient);
+        var registry = newRegistry();
 
         assertThatThrownBy(() -> registry.clientFor(AgentName.RISK_GUARDIAN_AGENT))
                 .isInstanceOf(IllegalStateException.class)
@@ -230,7 +236,7 @@ class AgentModelRegistryTest {
         cfg.setMaxTokens(512);
         properties.getAgentModels().setOverrides(Map.of("counselor", cfg));
 
-        assertThatThrownBy(() -> new AgentModelRegistry(properties, defaultClient))
+        assertThatThrownBy(() -> newRegistry())
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Unsupported provider");
     }
@@ -246,7 +252,7 @@ class AgentModelRegistryTest {
         cfg.setMaxTokens(512);
         properties.getAgentModels().setOverrides(Map.of("RISK-GUARDIAN", cfg));
 
-        var registry = new AgentModelRegistry(properties, defaultClient);
+        var registry = newRegistry();
         assertThat(registry.hasOverride(AgentName.RISK_GUARDIAN_AGENT)).isTrue();
     }
 
@@ -259,7 +265,7 @@ class AgentModelRegistryTest {
         cfg.setMaxTokens(512);
         properties.getAgentModels().setOverrides(Map.of("nonexistent-agent", cfg));
 
-        var registry = new AgentModelRegistry(properties, defaultClient);
+        var registry = newRegistry();
         // Unknown key → no overrides active
         for (AgentName name : AgentName.values()) {
             assertThat(registry.hasOverride(name)).isFalse();
@@ -275,7 +281,7 @@ class AgentModelRegistryTest {
         // provider, temperature, maxTokens not set → inherit from default
         properties.getAgentModels().setOverrides(Map.of("counselor", cfg));
 
-        var registry = new AgentModelRegistry(properties, defaultClient);
+        var registry = newRegistry();
         var profile = registry.profileFor(AgentName.COUNSELOR_AGENT);
 
         assertThat(profile.model()).isEqualTo("qwen2.5:14b");
@@ -311,7 +317,7 @@ class AgentModelRegistryTest {
                 "counselor", cfg2,
                 "risk-guardian", cfg3)));
 
-        var registry = new AgentModelRegistry(properties, defaultClient);
+        var registry = newRegistry();
 
         assertThat(registry.hasOverride(AgentName.COMPANION_AGENT)).isTrue();
         assertThat(registry.hasOverride(AgentName.COUNSELOR_AGENT)).isTrue();

@@ -32,6 +32,17 @@ public class PsychologicalAssessmentService {
     }
 
     public PsychologyAssessment assess(String input, List<AiMessage> history) {
+        return assess(input, history, this.aiClient);
+    }
+
+    /**
+     * 使用指定的 AiClient 进行心理评估。
+     *
+     * <p>Per-agent 模型覆盖场景使用此重载，由调用方通过
+     * {@link com.mindbridge.agent.service.ai.AgentModelRegistry#clientFor(
+     * com.mindbridge.agent.service.agent.AgentName)} 获取对应 Agent 的客户端后传入。</p>
+     */
+    public PsychologyAssessment assess(String input, List<AiMessage> history, AiClient client) {
         // 高风险词库是硬规则，优先于模型判断，保证明显自伤/伤人信号不会被漏掉。
         if (RiskLexicon.hasHighRiskSignal(input.toLowerCase())) {
             return new PsychologyAssessment(
@@ -42,7 +53,7 @@ public class PsychologicalAssessmentService {
                     "Explicit high-risk signal detected.");
         }
         try {
-            String raw = aiClient.complete(PromptTemplates.psychologyPrompt(history, input));
+            String raw = client.complete(PromptTemplates.psychologyPrompt(history, input));
             return normalize(parseJson(raw));
         } catch (Exception ignored) {
             // 模型输出格式异常或调用失败时，使用关键词兜底，保证报告链路仍可运行。

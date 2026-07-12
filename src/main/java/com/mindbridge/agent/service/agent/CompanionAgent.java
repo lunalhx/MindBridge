@@ -2,8 +2,8 @@ package com.mindbridge.agent.service.agent;
 
 import com.mindbridge.agent.domain.IntentType;
 import com.mindbridge.agent.domain.RiskLevel;
-import com.mindbridge.agent.service.ai.AiClient;
 import com.mindbridge.agent.service.ai.AiMessage;
+import com.mindbridge.agent.service.ai.AgentModelRegistry;
 import com.mindbridge.agent.service.ai.PromptTemplates;
 import com.mindbridge.agent.service.agent.blackboard.AgentArtifact;
 import com.mindbridge.agent.service.agent.blackboard.AgentBlackboard;
@@ -28,18 +28,18 @@ public class CompanionAgent implements MindBridgeAgent {
 
     private static final Logger log = LoggerFactory.getLogger(CompanionAgent.class);
 
-    private final AiClient aiClient;
+    private final AgentModelRegistry agentModelRegistry;
     private final SkillRegistry skillRegistry;
 
     @Autowired
-    public CompanionAgent(AiClient aiClient, SkillRegistry skillRegistry) {
-        this.aiClient = aiClient;
+    public CompanionAgent(AgentModelRegistry agentModelRegistry, SkillRegistry skillRegistry) {
+        this.agentModelRegistry = agentModelRegistry;
         this.skillRegistry = skillRegistry;
     }
 
     /** 测试兼容构造：不注入 SkillRegistry，技能注入跳过。 */
-    public CompanionAgent(AiClient aiClient) {
-        this(aiClient, null);
+    public CompanionAgent(AgentModelRegistry agentModelRegistry) {
+        this(agentModelRegistry, null);
     }
 
     @Override
@@ -92,7 +92,7 @@ public class CompanionAgent implements MindBridgeAgent {
 
     private String planResponse(AgentContext context) {
         try {
-            String plan = aiClient.complete(List.of(
+            String plan = this.agentModelRegistry.clientFor(AgentName.COMPANION_AGENT).complete(List.of(
                     AiMessage.system("""
                             你是 MindBridge 的 CompanionAgent。
                             你负责普通学习、生活、校园事务、编程和日常聊天。

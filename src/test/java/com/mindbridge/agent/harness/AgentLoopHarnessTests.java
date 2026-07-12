@@ -73,14 +73,18 @@ class AgentLoopHarnessTests {
                 shortTermMemoryService,
                 properties,
                 new PrivacySanitizer(),
-                aiClient,
+                TestAgentModelRegistry.withFixedClient(aiClient),
                 userProfileMemoryService);
-        SupervisorAgent supervisorAgent = new SupervisorAgent(new IntentClassifier(aiClient));
-        KnowledgeAgent knowledgeAgent = new KnowledgeAgent(knowledgeService, properties, aiClient);
+        SupervisorAgent supervisorAgent = new SupervisorAgent(
+                new IntentClassifier(aiClient),
+                TestAgentModelRegistry.withFixedClient(aiClient));
+        KnowledgeAgent knowledgeAgent = new KnowledgeAgent(
+                knowledgeService, properties, TestAgentModelRegistry.withFixedClient(aiClient));
         RiskGuardianAgent riskGuardianAgent = new RiskGuardianAgent(
-                new PsychologicalAssessmentService(aiClient, new ObjectMapper()));
-        CompanionAgent companionAgent = new CompanionAgent(aiClient);
-        CounselorAgent counselorAgent = new CounselorAgent(aiClient);
+                new PsychologicalAssessmentService(aiClient, new ObjectMapper()),
+                TestAgentModelRegistry.withFixedClient(aiClient));
+        CompanionAgent companionAgent = new CompanionAgent(TestAgentModelRegistry.withFixedClient(aiClient));
+        CounselorAgent counselorAgent = new CounselorAgent(TestAgentModelRegistry.withFixedClient(aiClient));
 
         runtimeService = new AgentRuntimeService(
                 memoryAgent,

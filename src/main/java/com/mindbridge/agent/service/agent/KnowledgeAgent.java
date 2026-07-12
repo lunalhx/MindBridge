@@ -2,8 +2,8 @@ package com.mindbridge.agent.service.agent;
 
 import com.mindbridge.agent.config.MindBridgeProperties;
 import com.mindbridge.agent.domain.IntentType;
-import com.mindbridge.agent.service.ai.AiClient;
 import com.mindbridge.agent.service.ai.AiMessage;
+import com.mindbridge.agent.service.ai.AgentModelRegistry;
 import com.mindbridge.agent.service.agent.blackboard.AgentArtifact;
 import com.mindbridge.agent.service.agent.blackboard.AgentBlackboard;
 import com.mindbridge.agent.service.agent.blackboard.AgentFlag;
@@ -27,12 +27,12 @@ public class KnowledgeAgent implements MindBridgeAgent {
 
     private final KnowledgeService knowledgeService;
     private final MindBridgeProperties properties;
-    private final AiClient aiClient;
+    private final AgentModelRegistry agentModelRegistry;
 
-    public KnowledgeAgent(KnowledgeService knowledgeService, MindBridgeProperties properties, AiClient aiClient) {
+    public KnowledgeAgent(KnowledgeService knowledgeService, MindBridgeProperties properties, AgentModelRegistry agentModelRegistry) {
         this.knowledgeService = knowledgeService;
         this.properties = properties;
-        this.aiClient = aiClient;
+        this.agentModelRegistry = agentModelRegistry;
     }
 
     @Override
@@ -95,7 +95,7 @@ public class KnowledgeAgent implements MindBridgeAgent {
 
     private String rewriteQuery(AgentContext context) {
         try {
-            String query = aiClient.complete(List.of(
+            String query = this.agentModelRegistry.clientFor(AgentName.KNOWLEDGE_AGENT).complete(List.of(
                     AiMessage.system("""
                             你是 MindBridge 的 KnowledgeAgent。
                             你的任务是把学生输入改写成适合检索校园心理知识库的中文查询词。
@@ -122,7 +122,7 @@ public class KnowledgeAgent implements MindBridgeAgent {
             return false;
         }
         try {
-            String decision = aiClient.complete(List.of(
+            String decision = this.agentModelRegistry.clientFor(AgentName.KNOWLEDGE_AGENT).complete(List.of(
                     AiMessage.system("""
                             你是 MindBridge 的 KnowledgeAgent。
                             判断检索结果是否足以支持后续心理关怀回答。
@@ -145,7 +145,7 @@ public class KnowledgeAgent implements MindBridgeAgent {
 
     private String refineQuery(AgentContext context, String previousQuery, List<SearchResult> results) {
         try {
-            String query = aiClient.complete(List.of(
+            String query = this.agentModelRegistry.clientFor(AgentName.KNOWLEDGE_AGENT).complete(List.of(
                     AiMessage.system("""
                             你是 MindBridge 的 KnowledgeAgent。
                             上一次检索信息不足，请给出一个新的、更具体的中文检索 query。
