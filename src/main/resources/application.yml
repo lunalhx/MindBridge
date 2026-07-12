@@ -91,6 +91,10 @@ mindbridge:
     decision-threshold: ${AGENT_DECISION_THRESHOLD:0.6}
     max-rounds: ${AGENT_MAX_ROUNDS:8}
     max-revisions: ${AGENT_MAX_REVISIONS:2}
+  checkpoint:
+    enabled: ${CHECKPOINT_ENABLED:false}
+    ttl-seconds: ${CHECKPOINT_TTL_SECONDS:3600}
+    schema-version: ${CHECKPOINT_SCHEMA_VERSION:1}
   agent-models:
     overrides: {}
   ai:

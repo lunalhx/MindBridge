@@ -74,7 +74,11 @@ public class EventDrivenAgentRuntime implements AgentRuntime {
     @Override
     public AgentRunResult run(UserAccount user, ChatSession session, String originalInput, String modelInput,
                                AgentStepListener listener) {
-        AgentContext context = new AgentContext(user, session, originalInput, modelInput);
+        return run(new AgentContext(user, session, originalInput, modelInput), listener);
+    }
+
+    @Override
+    public AgentRunResult run(AgentContext context, AgentStepListener listener) {
         int revisions = 0;
 
         for (int round = 1; round <= maxRounds; round++) {

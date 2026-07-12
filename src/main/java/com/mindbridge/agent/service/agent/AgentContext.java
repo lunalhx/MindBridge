@@ -72,30 +72,38 @@ public class AgentContext {
      */
     public static AgentContext from(AgentBlackboard blackboard) {
         var ctx = new AgentContext(null, null, null, null);
-        ctx.blackboard = blackboard;
+        ctx.restoreBlackboard(blackboard);
+        return ctx;
+    }
 
+    /**
+     * 用一个 Blackboard 快照替换当前 Blackboard，并从 artifact 同步可变字段。
+     *
+     * <p>用于 Checkpoint 恢复：保留构造时注入的 user/session/originalInput/modelInput，
+     * 只替换 Blackboard 状态和从 artifact 推导的字段（intent/assessment/knowledge/response）。</p>
+     */
+    public void restoreBlackboard(AgentBlackboard blackboard) {
+        this.blackboard = blackboard;
         blackboard.getArtifact(AgentArtifact.NAME_INTENT)
-                .ifPresent(a -> { if (a.payload() instanceof IntentType it) ctx.intent = it; });
+                .ifPresent(a -> { if (a.payload() instanceof IntentType it) this.intent = it; });
         blackboard.getArtifact(AgentArtifact.NAME_ASSESSMENT)
-                .ifPresent(a -> { if (a.payload() instanceof PsychologyAssessment pa) ctx.assessment = pa; });
+                .ifPresent(a -> { if (a.payload() instanceof PsychologyAssessment pa) this.assessment = pa; });
         blackboard.getArtifact(AgentArtifact.NAME_KNOWLEDGE)
                 .ifPresent(a -> {
                     if (a.payload() instanceof List<?> list) {
                         @SuppressWarnings("unchecked")
                         List<SearchResult> sr = (List<SearchResult>) list;
-                        ctx.retrievedKnowledge = sr;
+                        this.retrievedKnowledge = sr;
                     }
                 });
         blackboard.getArtifact(AgentArtifact.NAME_RESPONSE)
                 .ifPresent(a -> {
                     if (a.payload() instanceof ResponseArtifactPayload rap) {
-                        ctx.responsePlan = rap.plan();
-                        ctx.responseMessages = rap.messages();
-                        if (a.producer() != null) ctx.responseAgent = a.producer();
+                        this.responsePlan = rap.plan();
+                        this.responseMessages = rap.messages();
+                        if (a.producer() != null) this.responseAgent = a.producer();
                     }
                 });
-
-        return ctx;
     }
 
     // ────────────── 不可变字段 getter ──────────────
@@ -264,5 +272,25 @@ public class AgentContext {
      */
     public AgentBlackboard blackboard() {
         return blackboard;
+    }
+
+    /**
+     * 从 checkpoint 恢复非 Blackboard 管理的可变字段。
+     *
+     * <p>这些字段由 MemoryAgent / RiskGuardianAgent 等设置，但未写入 Blackboard artifact，
+     * 需要从 checkpoint 单独恢复。</p>
+     */
+    public void restoreCheckpointFields(
+            List<AiMessage> previousHistory,
+            List<AiMessage> modelHistory,
+            String memoryBrief,
+            String knowledgeQuery,
+            RiskLevel riskLevel
+    ) {
+        if (previousHistory != null) this.previousHistory = List.copyOf(previousHistory);
+        if (modelHistory != null) this.modelHistory = List.copyOf(modelHistory);
+        if (memoryBrief != null) this.memoryBrief = memoryBrief;
+        if (knowledgeQuery != null) this.knowledgeQuery = knowledgeQuery;
+        if (riskLevel != null) this.riskLevel = riskLevel;
     }
 }

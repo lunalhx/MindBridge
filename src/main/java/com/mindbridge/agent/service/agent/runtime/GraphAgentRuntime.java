@@ -109,10 +109,14 @@ public class GraphAgentRuntime implements AgentRuntime {
     @Override
     public AgentRunResult run(UserAccount user, ChatSession session, String originalInput, String modelInput,
                                AgentStepListener listener) {
-        AgentContext context = new AgentContext(user, session, originalInput, modelInput);
+        return run(new AgentContext(user, session, originalInput, modelInput), listener);
+    }
 
+    @Override
+    public AgentRunResult run(AgentContext context, AgentStepListener listener) {
         AgentName current = graph.entry();
-        for (int step = 1; step <= MAX_STEPS; step++) {
+        int startStep = context.steps().size() + 1;
+        for (int step = startStep; step <= MAX_STEPS; step++) {
             var agent = graph.agentOf(current);
             if (agent == null) {
                 throw new AgentRuntimeExecutionException(

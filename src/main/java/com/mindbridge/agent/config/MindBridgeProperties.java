@@ -25,6 +25,7 @@ public class MindBridgeProperties {
     private final Agent agent = new Agent();
     private final AgentModels agentModels = new AgentModels();
     private final ToolQueue toolQueue = new ToolQueue();
+    private final Checkpoint checkpoint = new Checkpoint();
 
     public Ai getAi() {
         return ai;
@@ -64,6 +65,10 @@ public class MindBridgeProperties {
 
     public ToolQueue getToolQueue() {
         return toolQueue;
+    }
+
+    public Checkpoint getCheckpoint() {
+        return checkpoint;
     }
 
     public static class Agent {
@@ -664,5 +669,24 @@ public class MindBridgeProperties {
         public void setPollIntervalMs(long pollIntervalMs) { this.pollIntervalMs = pollIntervalMs; }
         public int getBatchSize() { return batchSize; }
         public void setBatchSize(int batchSize) { this.batchSize = batchSize; }
+    }
+
+    public static class Checkpoint {
+        /**
+         * 是否启用 Agent 运行时 Checkpoint/中断恢复。
+         * 默认 false，避免升级后改变生产行为。
+         */
+        private boolean enabled = false;
+        /** Checkpoint 在 Redis 中的存活时间（秒），过期后自动清理。 */
+        private long ttlSeconds = 3600;
+        /** Checkpoint 数据 schema 版本，不兼容时安全地从新运行开始。 */
+        private int schemaVersion = 1;
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public long getTtlSeconds() { return ttlSeconds; }
+        public void setTtlSeconds(long ttlSeconds) { this.ttlSeconds = ttlSeconds; }
+        public int getSchemaVersion() { return schemaVersion; }
+        public void setSchemaVersion(int schemaVersion) { this.schemaVersion = schemaVersion; }
     }
 }

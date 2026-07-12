@@ -34,8 +34,13 @@ public class SequentialAgentRuntime implements AgentRuntime {
     @Override
     public AgentRunResult run(UserAccount user, ChatSession session, String originalInput, String modelInput,
                                AgentStepListener listener) {
-        AgentContext context = new AgentContext(user, session, originalInput, modelInput);
-        for (int step = 1; step <= MAX_STEPS && !context.finished(); step++) {
+        return run(new AgentContext(user, session, originalInput, modelInput), listener);
+    }
+
+    @Override
+    public AgentRunResult run(AgentContext context, AgentStepListener listener) {
+        int startStep = context.steps().size() + 1;
+        for (int step = startStep; step <= MAX_STEPS && !context.finished(); step++) {
             MindBridgeAgent agent = nextAgent(context);
             String action = "";
             listener.onStarted(step, agent.name(), action);

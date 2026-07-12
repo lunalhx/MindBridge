@@ -1,7 +1,12 @@
 package com.mindbridge.agent.service.agent;
 
+import com.mindbridge.agent.config.MindBridgeProperties;
 import com.mindbridge.agent.domain.ChatSession;
 import com.mindbridge.agent.domain.UserAccount;
+import com.mindbridge.agent.repository.ChatSessionRepository;
+import com.mindbridge.agent.repository.UserAccountRepository;
+import com.mindbridge.agent.service.agent.checkpoint.CheckpointAwareAgentRuntime;
+import com.mindbridge.agent.service.agent.checkpoint.CheckpointService;
 import com.mindbridge.agent.service.agent.runtime.AgentRuntime;
 import com.mindbridge.agent.service.agent.runtime.AgentRuntimeFactory;
 import com.mindbridge.agent.service.agent.runtime.AgentStepListener;
@@ -19,6 +24,10 @@ import org.springframework.stereotype.Service;
  * <p>批次 3 后，实际调度逻辑委托给 {@link AgentRuntime}（由 {@link AgentRuntimeFactory} 按配置选择）。
  * 默认使用 {@link SequentialAgentRuntime}，保持与升级前完全一致的行为。</p>
  *
+ * <p>批次 13 后，当 {@code checkpoint.enabled=true} 时，运行时被
+ * {@link CheckpointAwareAgentRuntime} 包装，增加 checkpoint 保存/恢复能力。
+ * 默认 {@code enabled=false}，不影响生产行为。</p>
+ *
  * <p>保留 6-agent 直接构造入口，便于测试在不依赖 Spring 容器的情况下直接实例化。</p>
  */
 @Service
@@ -28,10 +37,23 @@ public class AgentRuntimeService {
 
     /**
      * Spring 主构造：通过工厂按配置选择运行时。
+     * 当 checkpoint 启用时，用 {@link CheckpointAwareAgentRuntime} 包装。
      */
     @Autowired
-    public AgentRuntimeService(AgentRuntimeFactory factory) {
-        this.runtime = factory.runtime();
+    public AgentRuntimeService(
+            AgentRuntimeFactory factory,
+            CheckpointService checkpointService,
+            UserAccountRepository userAccountRepository,
+            ChatSessionRepository chatSessionRepository,
+            MindBridgeProperties properties
+    ) {
+        AgentRuntime base = factory.runtime();
+        if (properties.getCheckpoint().isEnabled()) {
+            this.runtime = new CheckpointAwareAgentRuntime(
+                    base, checkpointService, userAccountRepository, chatSessionRepository, properties);
+        } else {
+            this.runtime = base;
+        }
     }
 
     /**
