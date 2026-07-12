@@ -2,6 +2,9 @@ package com.mindbridge.agent.service.tool;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -37,6 +40,7 @@ class ToolQueueWorkerTest {
     private AlertNotifier alertNotifier;
     private ToolPolicyRegistry policyRegistry;
     private MindBridgeProperties properties;
+    private ToolJobProcessor processor;
     private ToolQueueWorker worker;
 
     @BeforeEach
@@ -52,25 +56,25 @@ class ToolQueueWorkerTest {
         properties.getToolQueue().setMaxAttempts(3);
         properties.getToolQueue().setInitialBackoffSeconds(1);
         properties.getToolQueue().setBackoffMultiplier(2.0);
+        properties.getToolQueue().setLeaseSeconds(120);
 
-        worker = new ToolQueueWorker(jobRepository, reportRepository, alertRecordRepository,
+        processor = new ToolJobProcessor(jobRepository, reportRepository, alertRecordRepository,
                 auditRepository, excelWriter, alertNotifier, policyRegistry, properties);
+        worker = new ToolQueueWorker(jobRepository, properties, processor);
     }
 
     // ────────── 成功执行 ──────────
 
     @Test
     void shouldExecuteExcelJobSuccessfully() {
-        var job = excelJob(null);
+        var job = claimedExcelJob(null);
         var report = report(RiskLevel.LOW);
-        when(jobRepository.findById(job.getId())).thenReturn(Optional.of(job));
         when(reportRepository.findById(1L)).thenReturn(Optional.of(report));
 
-        worker.processJob(job);
+        processor.processClaimedJob(job);
 
         verify(excelWriter).write(report);
         assertThat(job.getStatus()).isEqualTo(JobStatus.SUCCESS);
-        assertThat(job.getAttempts()).isEqualTo(1);
     }
 
     @Test
@@ -79,12 +83,12 @@ class ToolQueueWorkerTest {
         excelJob.setStatus(JobStatus.SUCCESS);
         excelJob.setId(10L);
 
-        var alertJob = alertJob(10L);
+        var alertJob = claimedAlertJob(10L);
         var report = report(RiskLevel.HIGH);
         when(jobRepository.findById(10L)).thenReturn(Optional.of(excelJob));
         when(reportRepository.findById(1L)).thenReturn(Optional.of(report));
 
-        worker.processJob(alertJob);
+        processor.processClaimedJob(alertJob);
 
         verify(alertNotifier).notify(any(), any());
         assertThat(alertJob.getStatus()).isEqualTo(JobStatus.SUCCESS);
@@ -98,54 +102,53 @@ class ToolQueueWorkerTest {
         excelJob.setStatus(JobStatus.PENDING);
         excelJob.setId(10L);
 
-        var alertJob = alertJob(10L);
+        var alertJob = claimedAlertJob(10L);
         when(jobRepository.findById(10L)).thenReturn(Optional.of(excelJob));
 
-        worker.processJob(alertJob);
+        processor.processClaimedJob(alertJob);
 
         assertThat(alertJob.getStatus()).isEqualTo(JobStatus.BLOCKED);
         verify(alertNotifier, never()).notify(any(), any());
     }
 
     @Test
-       void shouldDeadLetterWhenDependencyIsDeadLetter() {
+    void shouldDeadLetterWhenDependencyIsDeadLetter() {
         var excelJob = excelJob(null);
         excelJob.setStatus(JobStatus.DEAD_LETTER);
         excelJob.setId(10L);
 
-        var alertJob = alertJob(10L);
+        var alertJob = claimedAlertJob(10L);
         when(jobRepository.findById(10L)).thenReturn(Optional.of(excelJob));
 
-        worker.processJob(alertJob);
+        processor.processClaimedJob(alertJob);
 
         assertThat(alertJob.getStatus()).isEqualTo(JobStatus.DEAD_LETTER);
-        assertThat(alertJob.getErrorSummary()).contains("dead letter");
+        assertThat(alertJob.getErrorSummary()).contains("死信");
     }
 
     @Test
-    void shouldBlockWhenDependencyNotFound() {
-        var alertJob = alertJob(99L);
+    void shouldDeadLetterWhenDependencyNotFound() {
+        var alertJob = claimedAlertJob(99L);
         when(jobRepository.findById(99L)).thenReturn(Optional.empty());
 
-        worker.processJob(alertJob);
+        processor.processClaimedJob(alertJob);
 
-        assertThat(alertJob.getStatus()).isEqualTo(JobStatus.BLOCKED);
+        assertThat(alertJob.getStatus()).isEqualTo(JobStatus.DEAD_LETTER);
+        assertThat(alertJob.getErrorSummary()).contains("依赖任务不存在");
     }
 
     // ────────── 重试和退避 ──────────
 
     @Test
     void shouldRetryWithBackoffOnFailure() {
-        var job = excelJob(null);
+        var job = claimedExcelJob(null);
         var report = report(RiskLevel.LOW);
-        when(jobRepository.findById(job.getId())).thenReturn(Optional.of(job));
         when(reportRepository.findById(1L)).thenReturn(Optional.of(report));
         doThrow(new RuntimeException("Excel error")).when(excelWriter).write(any());
 
-        worker.processJob(job);
+        processor.processClaimedJob(job);
 
         assertThat(job.getStatus()).isEqualTo(JobStatus.RETRY);
-        assertThat(job.getAttempts()).isEqualTo(1);
         assertThat(job.getNextAttemptAt()).isAfter(Instant.now());
         assertThat(job.getErrorSummary()).contains("Excel error");
     }
@@ -169,17 +172,15 @@ class ToolQueueWorkerTest {
 
     @Test
     void shouldDeadLetterAfterMaxAttempts() {
-        var job = excelJob(null);
-        job.setAttempts(2); // next attempt = 3 = max
+        var job = claimedExcelJob(null);
+        job.setAttempts(3); // already at max (claimJob incremented to 3)
         var report = report(RiskLevel.LOW);
-        when(jobRepository.findById(job.getId())).thenReturn(Optional.of(job));
         when(reportRepository.findById(1L)).thenReturn(Optional.of(report));
         doThrow(new RuntimeException("Persistent failure")).when(excelWriter).write(any());
 
-        worker.processJob(job);
+        processor.processClaimedJob(job);
 
         assertThat(job.getStatus()).isEqualTo(JobStatus.DEAD_LETTER);
-        assertThat(job.getAttempts()).isEqualTo(3);
         assertThat(job.getErrorSummary()).contains("Persistent failure");
     }
 
@@ -187,13 +188,13 @@ class ToolQueueWorkerTest {
 
     @Test
     void shouldDeadLetterWhenReportNotFound() {
-        var job = excelJob(null);
+        var job = claimedExcelJob(null);
         when(reportRepository.findById(1L)).thenReturn(Optional.empty());
 
-        worker.processJob(job);
+        processor.processClaimedJob(job);
 
         assertThat(job.getStatus()).isEqualTo(JobStatus.DEAD_LETTER);
-        assertThat(job.getErrorSummary()).contains("Report not found");
+        assertThat(job.getErrorSummary()).contains("报告不存在");
         verify(excelWriter, never()).write(any());
     }
 
@@ -203,22 +204,51 @@ class ToolQueueWorkerTest {
     void pollShouldProcessPendingJobs() {
         var job = excelJob(null);
         var report = report(RiskLevel.LOW);
-        when(jobRepository.findByStatusInAndNextAttemptAtBeforeOrderByCreatedAtAsc(
-                any(), any())).thenReturn(List.of(job));
+        var claimedJob = claimedExcelJob(null);
+        when(jobRepository.findExpiredLeases(any())).thenReturn(List.of());
+        when(jobRepository.findReadyJobs(any(), any())).thenReturn(List.of(job));
+        when(jobRepository.claimJob(eq(1L), anyString(), any(), any(), any())).thenReturn(1);
+        when(jobRepository.findById(1L)).thenReturn(Optional.of(claimedJob));
         when(reportRepository.findById(1L)).thenReturn(Optional.of(report));
 
         worker.poll();
 
         verify(excelWriter).write(report);
-        assertThat(job.getStatus()).isEqualTo(JobStatus.SUCCESS);
+        assertThat(claimedJob.getStatus()).isEqualTo(JobStatus.SUCCESS);
     }
 
     @Test
     void pollShouldProcessEmptyListGracefully() {
-        when(jobRepository.findByStatusInAndNextAttemptAtBeforeOrderByCreatedAtAsc(
-                any(), any())).thenReturn(List.of());
+        when(jobRepository.findExpiredLeases(any())).thenReturn(List.of());
+        when(jobRepository.findReadyJobs(any(), any())).thenReturn(List.of());
 
         worker.poll(); // should not throw
+    }
+
+    @Test
+    void pollShouldSkipJobWhenClaimFails() {
+        var job = excelJob(null);
+        when(jobRepository.findExpiredLeases(any())).thenReturn(List.of());
+        when(jobRepository.findReadyJobs(any(), any())).thenReturn(List.of(job));
+        when(jobRepository.claimJob(eq(1L), anyString(), any(), any(), any())).thenReturn(0);
+
+        worker.poll();
+
+        verify(excelWriter, never()).write(any());
+    }
+
+    @Test
+    void pollShouldResetExpiredLeaseToRetry() {
+        var stuck = claimedExcelJob(null);
+        stuck.setStatus(JobStatus.RUNNING);
+        when(jobRepository.findExpiredLeases(any())).thenReturn(List.of(stuck));
+        when(jobRepository.findReadyJobs(any(), any())).thenReturn(List.of());
+
+        worker.poll();
+
+        assertThat(stuck.getStatus()).isEqualTo(JobStatus.RETRY);
+        assertThat(stuck.getWorkerId()).isNull();
+        assertThat(stuck.getLeaseUntil()).isNull();
     }
 
     // ────────── 重启恢复 ──────────
@@ -231,14 +261,17 @@ class ToolQueueWorkerTest {
         job.setAttempts(0);
         job.setNextAttemptAt(Instant.now().minus(1, ChronoUnit.MINUTES)); // overdue
 
+        var claimedJob = claimedExcelJob(null);
         var report = report(RiskLevel.LOW);
-        when(jobRepository.findByStatusInAndNextAttemptAtBeforeOrderByCreatedAtAsc(
-                any(), any())).thenReturn(List.of(job));
+        when(jobRepository.findExpiredLeases(any())).thenReturn(List.of());
+        when(jobRepository.findReadyJobs(any(), any())).thenReturn(List.of(job));
+        when(jobRepository.claimJob(eq(1L), anyString(), any(), any(), any())).thenReturn(1);
+        when(jobRepository.findById(1L)).thenReturn(Optional.of(claimedJob));
         when(reportRepository.findById(1L)).thenReturn(Optional.of(report));
 
         worker.poll();
 
-        assertThat(job.getStatus()).isEqualTo(JobStatus.SUCCESS);
+        assertThat(claimedJob.getStatus()).isEqualTo(JobStatus.SUCCESS);
     }
 
     @Test
@@ -248,40 +281,42 @@ class ToolQueueWorkerTest {
         job.setAttempts(1);
         job.setNextAttemptAt(Instant.now().minus(1, ChronoUnit.MINUTES)); // backoff elapsed
 
+        var claimedJob = claimedExcelJob(null);
+        claimedJob.setAttempts(2);
         var report = report(RiskLevel.LOW);
-        when(jobRepository.findByStatusInAndNextAttemptAtBeforeOrderByCreatedAtAsc(
-                any(), any())).thenReturn(List.of(job));
+        when(jobRepository.findExpiredLeases(any())).thenReturn(List.of());
+        when(jobRepository.findReadyJobs(any(), any())).thenReturn(List.of(job));
+        when(jobRepository.claimJob(eq(1L), anyString(), any(), any(), any())).thenReturn(1);
+        when(jobRepository.findById(1L)).thenReturn(Optional.of(claimedJob));
         when(reportRepository.findById(1L)).thenReturn(Optional.of(report));
 
         worker.poll();
 
-        assertThat(job.getStatus()).isEqualTo(JobStatus.SUCCESS);
-        assertThat(job.getAttempts()).isEqualTo(2);
+        assertThat(claimedJob.getStatus()).isEqualTo(JobStatus.SUCCESS);
+        assertThat(claimedJob.getAttempts()).isEqualTo(2);
     }
 
     // ────────── 审计 ──────────
 
     @Test
     void shouldRecordAuditOnSuccess() {
-        var job = excelJob(null);
+        var job = claimedExcelJob(null);
         var report = report(RiskLevel.LOW);
-        when(jobRepository.findById(job.getId())).thenReturn(Optional.of(job));
         when(reportRepository.findById(1L)).thenReturn(Optional.of(report));
 
-        worker.processJob(job);
+        processor.processClaimedJob(job);
 
         verify(auditRepository).save(any());
     }
 
     @Test
     void shouldRecordAuditOnFailure() {
-        var job = excelJob(null);
+        var job = claimedExcelJob(null);
         var report = report(RiskLevel.LOW);
-        when(jobRepository.findById(job.getId())).thenReturn(Optional.of(job));
         when(reportRepository.findById(1L)).thenReturn(Optional.of(report));
         doThrow(new RuntimeException("fail")).when(excelWriter).write(any());
 
-        worker.processJob(job);
+        processor.processClaimedJob(job);
 
         verify(auditRepository).save(any());
     }
@@ -302,6 +337,19 @@ class ToolQueueWorkerTest {
         return job;
     }
 
+    /**
+     * A job that has already been atomically claimed (RUNNING, attempts incremented).
+     */
+    private ToolJob claimedExcelJob(Long dependsOn) {
+        var job = excelJob(dependsOn);
+        job.setStatus(JobStatus.RUNNING);
+        job.setAttempts(1);
+        job.setWorkerId("test-worker");
+        job.setClaimedAt(Instant.now());
+        job.setLeaseUntil(Instant.now().plusSeconds(120));
+        return job;
+    }
+
     private ToolJob alertJob(Long dependsOn) {
         var job = new ToolJob();
         org.springframework.test.util.ReflectionTestUtils.setField(job, "id", 2L);
@@ -313,6 +361,19 @@ class ToolQueueWorkerTest {
         job.setMaxAttempts(3);
         job.setNextAttemptAt(Instant.now());
         job.setIdempotencyKey(ToolQueueService.idempotencyKey(1L, ToolQueueService.TYPE_RISK_ALERT_EMAIL));
+        return job;
+    }
+
+    /**
+     * A claimed alert job (RUNNING, attempts incremented).
+     */
+    private ToolJob claimedAlertJob(Long dependsOn) {
+        var job = alertJob(dependsOn);
+        job.setStatus(JobStatus.RUNNING);
+        job.setAttempts(1);
+        job.setWorkerId("test-worker");
+        job.setClaimedAt(Instant.now());
+        job.setLeaseUntil(Instant.now().plusSeconds(120));
         return job;
     }
 

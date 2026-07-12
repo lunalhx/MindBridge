@@ -1,9 +1,15 @@
 package com.mindbridge.agent.service.tool;
 
 import com.mindbridge.agent.config.MindBridgeProperties;
+import com.mindbridge.agent.domain.PsychologicalReport;
 import com.mindbridge.agent.domain.RiskLevel;
+import com.mindbridge.agent.domain.ToolAuditRecord;
+import com.mindbridge.agent.domain.ToolAuditRecord.AuthorizationDecision;
 import com.mindbridge.agent.domain.ToolJob;
 import com.mindbridge.agent.domain.ToolJob.JobStatus;
+import com.mindbridge.agent.domain.ToolStatus;
+import com.mindbridge.agent.repository.PsychologicalReportRepository;
+import com.mindbridge.agent.repository.ToolAuditRecordRepository;
 import com.mindbridge.agent.repository.ToolJobRepository;
 import java.time.Instant;
 import java.util.Optional;
@@ -31,10 +37,17 @@ public class ToolQueueService {
     public static final String TYPE_RISK_ALERT_EMAIL = "risk-alert-email";
 
     private final ToolJobRepository jobRepository;
+    private final PsychologicalReportRepository reportRepository;
+    private final ToolAuditRecordRepository auditRepository;
     private final MindBridgeProperties properties;
 
-    public ToolQueueService(ToolJobRepository jobRepository, MindBridgeProperties properties) {
+    public ToolQueueService(ToolJobRepository jobRepository,
+                            PsychologicalReportRepository reportRepository,
+                            ToolAuditRecordRepository auditRepository,
+                            MindBridgeProperties properties) {
         this.jobRepository = jobRepository;
+        this.reportRepository = reportRepository;
+        this.auditRepository = auditRepository;
         this.properties = properties;
     }
 
@@ -92,5 +105,61 @@ public class ToolQueueService {
      */
     static String idempotencyKey(Long reportId, String type) {
         return reportId + ":" + type;
+    }
+
+    /**
+     * 批准人工审核任务，将其放回执行队列（PENDING）。
+     */
+    @Transactional
+    public void approve(Long jobId, String reviewer) {
+        Instant now = Instant.now();
+        int updated = jobRepository.reviewJob(jobId, JobStatus.PENDING, "APPROVED", reviewer, now);
+        if (updated == 0) {
+            throw new IllegalStateException("Job " + jobId + " is not in REVIEW_REQUIRED status or does not exist");
+        }
+        recordReviewAudit(jobId, reviewer, "APPROVED", "人工审核通过");
+        log.info("[tool-queue] Job {} approved by {}, status reset to PENDING", jobId, reviewer);
+    }
+
+    /**
+     * 拒绝人工审核任务，将其移入死信队列。
+     */
+    @Transactional
+    public void reject(Long jobId, String reviewer, String reason) {
+        Instant now = Instant.now();
+        String reasonText = reason != null ? reason : "审核拒绝";
+        int updated = jobRepository.reviewJob(jobId, JobStatus.DEAD_LETTER, "REJECTED: " + reasonText, reviewer, now);
+        if (updated == 0) {
+            throw new IllegalStateException("Job " + jobId + " is not in REVIEW_REQUIRED status or does not exist");
+        }
+        // Also record the rejection in errorSummary
+        jobRepository.findById(jobId).ifPresent(job -> {
+            job.setErrorSummary("审核拒绝: " + reasonText);
+            jobRepository.save(job);
+        });
+        recordReviewAudit(jobId, reviewer, "REJECTED", "审核拒绝: " + reasonText);
+        log.info("[tool-queue] Job {} rejected by {}: {}", jobId, reviewer, reasonText);
+    }
+
+    /**
+     * 记录人工审核的审计记录。
+     */
+    private void recordReviewAudit(Long jobId, String reviewer, String decision, String summary) {
+        try {
+            ToolJob job = jobRepository.findById(jobId).orElse(null);
+            if (job == null) return;
+            RiskLevel riskLevel = reportRepository.findById(job.getReportId())
+                    .map(PsychologicalReport::getRiskLevel).orElse(RiskLevel.LOW);
+            ToolAuditRecord audit = new ToolAuditRecord();
+            audit.setReportId(job.getReportId());
+            audit.setToolName(job.getType());
+            audit.setRiskLevel(riskLevel);
+            audit.setDecision(AuthorizationDecision.REVIEW_REQUIRED);
+            audit.setResult(decision.equals("APPROVED") ? ToolStatus.PENDING : ToolStatus.NOT_EXECUTED);
+            audit.setSummary(summary != null && summary.length() > 500 ? summary.substring(0, 500) : summary);
+            auditRepository.save(audit);
+        } catch (Exception e) {
+            log.warn("[tool-queue] Failed to record review audit for job={}: {}", jobId, e.getMessage());
+        }
     }
 }

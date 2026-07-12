@@ -40,4 +40,11 @@ public class DeadLetterService {
     public List<ToolJob> blockedJobs() {
         return jobRepository.findByStatusOrderByUpdatedAtDesc(JobStatus.BLOCKED);
     }
+
+    /**
+     * 查询等待人工审核的作业。
+     */
+    public List<ToolJob> reviewRequiredJobs() {
+        return jobRepository.findByStatusOrderByUpdatedAtDesc(JobStatus.REVIEW_REQUIRED);
+    }
 }

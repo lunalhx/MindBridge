@@ -64,6 +64,36 @@ public class ToolJob {
     @Column(length = 500)
     private String errorSummary;
 
+    /**
+     * 领取此 Job 的 Worker 标识（用于原子领取和 lease 管理）。
+     */
+    @Column(name = "worker_id", length = 100)
+    private String workerId;
+
+    /**
+     * Job 被领取的时间。
+     */
+    @Column(name = "claimed_at")
+    private Instant claimedAt;
+
+    /**
+     * Lease 过期时间，超过此时间其他 Worker 可重新领取。
+     */
+    @Column(name = "lease_until")
+    private Instant leaseUntil;
+
+    /**
+     * 人工审核意见：APPROVED / REJECTED（仅 REVIEW_REQUIRED 状态使用）。
+     */
+    @Column(name = "review_decision", length = 20)
+    private String reviewDecision;
+
+    /**
+     * 审核人标识。
+     */
+    @Column(name = "reviewer", length = 100)
+    private String reviewer;
+
     /** 乐观锁版本号，防止并发重复领取 */
     @Version
     private Long version;
@@ -109,6 +139,21 @@ public class ToolJob {
     public String getErrorSummary() { return errorSummary; }
     public void setErrorSummary(String errorSummary) { this.errorSummary = errorSummary; }
 
+    public String getWorkerId() { return workerId; }
+    public void setWorkerId(String workerId) { this.workerId = workerId; }
+
+    public Instant getClaimedAt() { return claimedAt; }
+    public void setClaimedAt(Instant claimedAt) { this.claimedAt = claimedAt; }
+
+    public Instant getLeaseUntil() { return leaseUntil; }
+    public void setLeaseUntil(Instant leaseUntil) { this.leaseUntil = leaseUntil; }
+
+    public String getReviewDecision() { return reviewDecision; }
+    public void setReviewDecision(String reviewDecision) { this.reviewDecision = reviewDecision; }
+
+    public String getReviewer() { return reviewer; }
+    public void setReviewer(String reviewer) { this.reviewer = reviewer; }
+
     public Long getVersion() { return version; }
     public void setVersion(Long version) { this.version = version; }
 
@@ -132,6 +177,8 @@ public class ToolJob {
         /** 死信（达到最大重试次数） */
         DEAD_LETTER,
         /** 被阻塞（依赖未满足） */
-        BLOCKED
+        BLOCKED,
+        /** 等待人工审核 */
+        REVIEW_REQUIRED
     }
 }

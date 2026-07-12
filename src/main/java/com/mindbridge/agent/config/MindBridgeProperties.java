@@ -658,6 +658,8 @@ public class MindBridgeProperties {
         private long pollIntervalMs = 5000;
         /** 每次轮询最多领取的作业数。 */
         private int batchSize = 10;
+        /** Job lease 超时秒数。Worker 崩溃后，其他 Worker 可在 lease 过期后重新领取。 */
+        private int leaseSeconds = 120;
 
         public int getMaxAttempts() { return maxAttempts; }
         public void setMaxAttempts(int maxAttempts) { this.maxAttempts = maxAttempts; }
@@ -669,6 +671,8 @@ public class MindBridgeProperties {
         public void setPollIntervalMs(long pollIntervalMs) { this.pollIntervalMs = pollIntervalMs; }
         public int getBatchSize() { return batchSize; }
         public void setBatchSize(int batchSize) { this.batchSize = batchSize; }
+        public int getLeaseSeconds() { return leaseSeconds; }
+        public void setLeaseSeconds(int leaseSeconds) { this.leaseSeconds = leaseSeconds; }
     }
 
     public static class Checkpoint {

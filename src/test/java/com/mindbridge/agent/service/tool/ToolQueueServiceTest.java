@@ -11,6 +11,8 @@ import com.mindbridge.agent.config.MindBridgeProperties;
 import com.mindbridge.agent.domain.RiskLevel;
 import com.mindbridge.agent.domain.ToolJob;
 import com.mindbridge.agent.domain.ToolJob.JobStatus;
+import com.mindbridge.agent.repository.PsychologicalReportRepository;
+import com.mindbridge.agent.repository.ToolAuditRecordRepository;
 import com.mindbridge.agent.repository.ToolJobRepository;
 import java.time.Instant;
 import java.util.List;
@@ -21,15 +23,19 @@ import org.junit.jupiter.api.Test;
 class ToolQueueServiceTest {
 
     private ToolJobRepository jobRepository;
+    private PsychologicalReportRepository reportRepository;
+    private ToolAuditRecordRepository auditRepository;
     private MindBridgeProperties properties;
     private ToolQueueService queueService;
 
     @BeforeEach
     void setUp() {
         jobRepository = mock(ToolJobRepository.class);
+        reportRepository = mock(PsychologicalReportRepository.class);
+        auditRepository = mock(ToolAuditRecordRepository.class);
         properties = new MindBridgeProperties();
         properties.getToolQueue().setMaxAttempts(3);
-        queueService = new ToolQueueService(jobRepository, properties);
+        queueService = new ToolQueueService(jobRepository, reportRepository, auditRepository, properties);
     }
 
     // ────────── 入队 ──────────

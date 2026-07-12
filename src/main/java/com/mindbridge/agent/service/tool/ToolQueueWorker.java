@@ -1,23 +1,13 @@
 package com.mindbridge.agent.service.tool;
 
 import com.mindbridge.agent.config.MindBridgeProperties;
-import com.mindbridge.agent.domain.AlertRecord;
-import com.mindbridge.agent.domain.PsychologicalReport;
-import com.mindbridge.agent.domain.RiskLevel;
-import com.mindbridge.agent.domain.ToolAuditRecord;
-import com.mindbridge.agent.domain.ToolAuditRecord.AuthorizationDecision;
 import com.mindbridge.agent.domain.ToolJob;
 import com.mindbridge.agent.domain.ToolJob.JobStatus;
-import com.mindbridge.agent.domain.ToolStatus;
-import com.mindbridge.agent.repository.AlertRecordRepository;
-import com.mindbridge.agent.repository.PsychologicalReportRepository;
-import com.mindbridge.agent.repository.ToolAuditRecordRepository;
 import com.mindbridge.agent.repository.ToolJobRepository;
-import com.mindbridge.agent.service.mcp.AlertNotifier;
-import com.mindbridge.agent.service.mcp.ExcelReportWriter;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -27,11 +17,17 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 工具队列 Worker：轮询待执行作业并执行。
  *
- * <p>使用 @Scheduled 定期轮询 PENDING/RETRY 状态且 nextAttemptAt 已到的作业。
- * 通过 JPA @Version 乐观锁防止并发重复领取。
+ * <p>使用 @Scheduled 定期轮询 PENDING/RETRY/BLOCKED/REVIEW_REQUIRED 状态且 nextAttemptAt 已到的作业。
+ * 通过原子 UPDATE（claimJob）防止并发重复领取，并使用 lease 机制恢复崩溃的 Worker。
  * 指数退避：失败后按 initialBackoff × multiplier^attempts 计算下次尝试时间。
  * 达到 maxAttempts 后进入 DEAD_LETTER。
- * 依赖未满足（上游 BLOCKED/DEAD_LETTER/RETRY）时设为 BLOCKED。</p>
+ * 依赖未满足（上游 BLOCKED/DEAD_LETTER/RETRY）时设为 BLOCKED。
+ * 授权返回 REVIEW_REQUIRED 时进入人工审核状态，等待 approve/reject。</p>
+ *
+ * <p>注意：实际的 Job 处理（含外部 I/O 调用）委托给独立的 {@link ToolJobProcessor} Bean，
+ * 以避免 Spring 代理自调用导致事务边界失效。{@link #poll()} 中的
+ * {@code toolJobProcessor.processClaimedJob(...)} 调用经过 Spring 代理，
+ * 确保外部工具（Excel/邮件）在数据库事务之外执行。</p>
  */
 @Service
 public class ToolQueueWorker {
@@ -39,32 +35,19 @@ public class ToolQueueWorker {
     private static final Logger log = LoggerFactory.getLogger(ToolQueueWorker.class);
 
     private final ToolJobRepository jobRepository;
-    private final PsychologicalReportRepository reportRepository;
-    private final AlertRecordRepository alertRecordRepository;
-    private final ToolAuditRecordRepository auditRepository;
-    private final ExcelReportWriter excelWriter;
-    private final AlertNotifier alertNotifier;
-    private final ToolPolicyRegistry policyRegistry;
     private final MindBridgeProperties properties;
+    private final ToolJobProcessor toolJobProcessor;
+
+    private final String workerId = UUID.randomUUID().toString().substring(0, 8);
 
     public ToolQueueWorker(
             ToolJobRepository jobRepository,
-            PsychologicalReportRepository reportRepository,
-            AlertRecordRepository alertRecordRepository,
-            ToolAuditRecordRepository auditRepository,
-            ExcelReportWriter excelWriter,
-            AlertNotifier alertNotifier,
-            ToolPolicyRegistry policyRegistry,
-            MindBridgeProperties properties
+            MindBridgeProperties properties,
+            ToolJobProcessor toolJobProcessor
     ) {
         this.jobRepository = jobRepository;
-        this.reportRepository = reportRepository;
-        this.alertRecordRepository = alertRecordRepository;
-        this.auditRepository = auditRepository;
-        this.excelWriter = excelWriter;
-        this.alertNotifier = alertNotifier;
-        this.policyRegistry = policyRegistry;
         this.properties = properties;
+        this.toolJobProcessor = toolJobProcessor;
     }
 
     /**
@@ -75,182 +58,57 @@ public class ToolQueueWorker {
     @Transactional
     public void poll() {
         Instant now = Instant.now();
-        List<ToolJob> jobs = jobRepository
-                .findByStatusInAndNextAttemptAtBeforeOrderByCreatedAtAsc(
-                        List.of(JobStatus.PENDING, JobStatus.RETRY), now);
-
-        int batchSize = Math.min(properties.getToolQueue().getBatchSize(), jobs.size());
-        for (int i = 0; i < batchSize; i++) {
-            ToolJob job = jobs.get(i);
-            processJob(job);
+        // 1. Handle expired leases (RUNNING jobs with expired lease)
+        List<ToolJob> expiredLeases = jobRepository.findExpiredLeases(now);
+        for (ToolJob expired : expiredLeases) {
+            expired.setStatus(JobStatus.RETRY);
+            expired.setLeaseUntil(null);
+            expired.setClaimedAt(null);
+            expired.setWorkerId(null);
+            expired.setNextAttemptAt(now.plusSeconds(10));
+            jobRepository.save(expired);
+            log.warn("[tool-queue] Lease expired for job={}, type={}, reset to RETRY",
+                    expired.getId(), expired.getType());
         }
-    }
 
-    /**
-     * 处理单个作业。测试中可直接调用。
-     */
-    @Transactional
-    public void processJob(ToolJob job) {
-        // 依赖检查
-        if (job.getDependsOn() != null) {
-            ToolJob dependency = jobRepository.findById(job.getDependsOn()).orElse(null);
-            if (dependency == null || dependency.getStatus() != JobStatus.SUCCESS) {
-                handleBlocked(job, dependency);
-                return;
+        // 2. Find candidate jobs (IDs only for atomic claim)
+        List<ToolJob> candidates = jobRepository.findReadyJobs(
+                List.of(JobStatus.PENDING, JobStatus.RETRY, JobStatus.BLOCKED, JobStatus.REVIEW_REQUIRED), now);
+
+        int processed = 0;
+        int batchSize = properties.getToolQueue().getBatchSize();
+        for (ToolJob candidate : candidates) {
+            if (processed >= batchSize) break;
+
+            // 3. Atomic claim — only one worker can claim each job
+            Instant leaseUntil = now.plusSeconds(properties.getToolQueue().getLeaseSeconds());
+            int claimed = jobRepository.claimJob(candidate.getId(), workerId, now, leaseUntil, now);
+            if (claimed == 0) {
+                continue; // Another worker already claimed this job
             }
-        }
 
-        // 授权检查
-        var report = reportRepository.findById(job.getReportId()).orElse(null);
-        if (report == null) {
-            handleMissingReport(job);
-            return;
-        }
-        RiskLevel riskLevel = report.getRiskLevel();
-        var auth = policyRegistry.authorize(job.getType(), riskLevel);
-        if (!auth.allowed()) {
-            handleDenied(job, auth.reason());
-            return;
-        }
-
-        // 执行
-        job.setStatus(JobStatus.RUNNING);
-        job.setAttempts(job.getAttempts() + 1);
-        jobRepository.save(job);
-
-        try {
-            executeTool(job, report);
-            job.setStatus(JobStatus.SUCCESS);
-            jobRepository.save(job);
-            recordAudit(job, ToolStatus.SUCCESS, "Tool executed successfully");
-        } catch (Exception e) {
-            handleFailure(job, e);
-        }
-    }
-
-    // ────────────── 工具执行 ──────────────
-
-    private void executeTool(ToolJob job, PsychologicalReport report) {
-        String type = job.getType();
-        if (ToolQueueService.TYPE_EXCEL_REPORT.equals(type)) {
-            excelWriter.write(report);
-            report.setExcelStatus(ToolStatus.SUCCESS);
-            reportRepository.save(report);
-        } else if (ToolQueueService.TYPE_RISK_ALERT_EMAIL.equals(type)) {
-            sendAlerts(report, job.getReportId());
-        } else {
-            throw new IllegalArgumentException("Unknown tool type: " + type);
-        }
-    }
-
-    private void sendAlerts(PsychologicalReport report, Long reportId) {
-        boolean allSuccess = true;
-        for (String recipient : properties.getMcp().getEmail().getRecipients()) {
-            AlertRecord alertRecord = new AlertRecord();
-            alertRecord.setReport(report);
-            alertRecord.setRecipient(recipient);
-            alertRecordRepository.save(alertRecord);
-            try {
-                alertRecord.incrementAttempts();
-                alertNotifier.notify(alertRecord, report);
-                alertRecord.setStatus(ToolStatus.SUCCESS);
-            } catch (Exception e) {
-                alertRecord.setStatus(ToolStatus.FAILED);
-                alertRecord.setErrorMessage(shorten(e.getMessage()));
-                allSuccess = false;
+            // 4. Re-read after claim to get latest state
+            ToolJob claimedJob = jobRepository.findById(candidate.getId()).orElse(null);
+            if (claimedJob == null || claimedJob.getStatus() != JobStatus.RUNNING) {
+                continue;
             }
-            alertRecordRepository.save(alertRecord);
+
+            processed++;
+
+            // 5. Process outside the poll transaction — delegate to ToolJobProcessor (goes through Spring proxy)
+            toolJobProcessor.processClaimedJob(claimedJob);
         }
-        report.setEmailStatus(allSuccess ? ToolStatus.SUCCESS : ToolStatus.FAILED);
-        reportRepository.save(report);
-    }
-
-    // ────────────── 失败/阻塞/拒绝处理 ──────────────
-
-    private void handleFailure(ToolJob job, Exception e) {
-        String errorMsg = shorten(e.getMessage());
-        log.error("[tool-queue] Job {} failed (attempt {}/{}): {}",
-                job.getId(), job.getAttempts(), job.getMaxAttempts(), errorMsg, e);
-        job.setErrorSummary(errorMsg);
-
-        if (job.getAttempts() >= job.getMaxAttempts()) {
-            job.setStatus(JobStatus.DEAD_LETTER);
-            jobRepository.save(job);
-            recordAudit(job, ToolStatus.FAILED, "Max attempts reached: " + errorMsg);
-        } else {
-            job.setStatus(JobStatus.RETRY);
-            job.setNextAttemptAt(calculateBackoff(job.getAttempts()));
-            jobRepository.save(job);
-            recordAudit(job, ToolStatus.FAILED, "Retry scheduled: " + errorMsg);
-        }
-    }
-
-    private void handleBlocked(ToolJob job, ToolJob dependency) {
-        String reason;
-        if (dependency == null) {
-            reason = "Dependency job not found: " + job.getDependsOn();
-            job.setStatus(JobStatus.BLOCKED);
-            job.setNextAttemptAt(calculateBackoff(job.getAttempts()));
-        } else if (dependency.getStatus() == JobStatus.DEAD_LETTER) {
-            reason = "Dependency is in dead letter: " + job.getDependsOn();
-            job.setStatus(JobStatus.DEAD_LETTER);
-        } else {
-            reason = "Dependency not satisfied: " + job.getDependsOn() + " status=" + dependency.getStatus();
-            job.setStatus(JobStatus.BLOCKED);
-            job.setNextAttemptAt(calculateBackoff(job.getAttempts()));
-        }
-        job.setErrorSummary(reason);
-        jobRepository.save(job);
-        log.warn("[tool-queue] Job {} blocked: {}", job.getId(), reason);
-        recordAudit(job, ToolStatus.NOT_EXECUTED, reason);
-    }
-
-    private void handleDenied(ToolJob job, String reason) {
-        job.setStatus(JobStatus.DEAD_LETTER);
-        job.setErrorSummary("Authorization denied: " + reason);
-        jobRepository.save(job);
-        log.warn("[tool-queue] Job {} denied: {}", job.getId(), reason);
-        recordAudit(job, ToolStatus.NOT_EXECUTED, "Denied: " + reason);
-    }
-
-    private void handleMissingReport(ToolJob job) {
-        job.setStatus(JobStatus.DEAD_LETTER);
-        job.setErrorSummary("Report not found: " + job.getReportId());
-        jobRepository.save(job);
-        log.error("[tool-queue] Job {} cannot find report: {}", job.getId(), job.getReportId());
-        recordAudit(job, ToolStatus.FAILED, "Report not found");
     }
 
     // ────────────── 退避计算 ──────────────
 
+    /**
+     * 计算退避时间（返回 Instant），供测试使用。
+     */
     Instant calculateBackoff(int attempt) {
         long base = properties.getToolQueue().getInitialBackoffSeconds();
         double multiplier = properties.getToolQueue().getBackoffMultiplier();
         long delaySeconds = (long) (base * Math.pow(multiplier, attempt));
         return Instant.now().plus(delaySeconds, ChronoUnit.SECONDS);
-    }
-
-    // ────────────── 审计 ──────────────
-
-    private void recordAudit(ToolJob job, ToolStatus result, String summary) {
-        try {
-            var report = reportRepository.findById(job.getReportId()).orElse(null);
-            RiskLevel riskLevel = report != null ? report.getRiskLevel() : RiskLevel.LOW;
-            ToolAuditRecord audit = new ToolAuditRecord();
-            audit.setReportId(job.getReportId());
-            audit.setToolName(job.getType());
-            audit.setRiskLevel(riskLevel);
-            audit.setDecision(AuthorizationDecision.ALLOWED);
-            audit.setResult(result);
-            audit.setSummary(shorten(summary));
-            auditRepository.save(audit);
-        } catch (Exception e) {
-            log.error("[tool-queue] Failed to save audit: jobId={}, error={}", job.getId(), e.getMessage());
-        }
-    }
-
-    private String shorten(String msg) {
-        if (msg == null) return "";
-        return msg.length() > 500 ? msg.substring(0, 500) : msg;
     }
 }
