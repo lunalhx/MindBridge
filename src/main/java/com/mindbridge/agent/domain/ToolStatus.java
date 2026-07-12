@@ -7,5 +7,6 @@ public enum ToolStatus {
     PENDING,
     SUCCESS,
     FAILED,
-    SKIPPED
+    SKIPPED,
+    NOT_EXECUTED
 }
