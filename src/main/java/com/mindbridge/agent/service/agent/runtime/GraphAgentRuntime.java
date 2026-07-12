@@ -130,7 +130,17 @@ public class GraphAgentRuntime implements AgentRuntime {
 
     @Override
     public AgentRunResult run(AgentContext context, AgentStepListener listener) {
-        AgentName current = graph.entry();
+        AgentName current;
+        if (context.steps().isEmpty()) {
+            current = graph.entry();
+        } else {
+            current = deriveStartNode(context);
+            if (current == null) {
+                // 所有节点均已完成（例如 checkpoint 恢复后 Blackboard 显示已完成）
+                context.finish();
+                return AgentRunResult.from(context);
+            }
+        }
         int startStep = context.steps().size() + 1;
         for (int step = startStep; step <= MAX_STEPS; step++) {
             var agent = graph.agentOf(current);
@@ -178,6 +188,37 @@ public class GraphAgentRuntime implements AgentRuntime {
         throw new AgentRuntimeExecutionException(
                 "Graph runtime reached max steps without reaching terminal node",
                 RuntimeMode.GRAPH, context);
+    }
+
+    /**
+     * 根据 Blackboard flags/artifacts 推导 checkpoint 恢复后的首个未完成节点。
+     *
+     * <p>推导顺序（与 MindBridge 业务图一致）：</p>
+     * <ol>
+     *   <li>未加载记忆 → Memory</li>
+     *   <li>未路由 → Supervisor</li>
+     *   <li>非 CHAT 且未检索 → Knowledge</li>
+     *   <li>非 CHAT 且未评估 → RiskGuardian</li>
+     *   <li>未规划回复 → Companion（CHAT）或 Counselor（CONSULT/RISK）</li>
+     *   <li>已完成 → 返回 null（调用方应直接 finish 并返回结果）</li>
+     * </ol>
+     */
+    private AgentName deriveStartNode(AgentContext context) {
+        if (!context.memoryLoaded()) return AgentName.MEMORY_AGENT;
+        if (!context.intentRouted()) return AgentName.SUPERVISOR_AGENT;
+
+        IntentType intent = context.intent();
+        if (intent != null && intent != IntentType.CHAT) {
+            if (!context.knowledgeHandled()) return AgentName.KNOWLEDGE_AGENT;
+            if (!context.riskAssessed()) return AgentName.RISK_GUARDIAN_AGENT;
+        }
+
+        if (!context.responsePlanned()) {
+            return (intent == IntentType.CHAT) ? AgentName.COMPANION_AGENT : AgentName.COUNSELOR_AGENT;
+        }
+
+        // 所有节点均已完成
+        return null;
     }
 
     private AgentName selectNext(AgentContext context, AgentName current) {

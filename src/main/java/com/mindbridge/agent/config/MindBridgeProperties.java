@@ -684,7 +684,7 @@ public class MindBridgeProperties {
         /** Checkpoint 在 Redis 中的存活时间（秒），过期后自动清理。 */
         private long ttlSeconds = 3600;
         /** Checkpoint 数据 schema 版本，不兼容时安全地从新运行开始。 */
-        private int schemaVersion = 1;
+        private int schemaVersion = 2;
 
         public boolean isEnabled() { return enabled; }
         public void setEnabled(boolean enabled) { this.enabled = enabled; }

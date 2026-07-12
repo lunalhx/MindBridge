@@ -57,10 +57,14 @@ class CheckpointAwareAgentRuntimeTest {
         properties = new MindBridgeProperties();
         properties.getCheckpoint().setEnabled(true);
         properties.getCheckpoint().setTtlSeconds(3600);
-        properties.getCheckpoint().setSchemaVersion(1);
+        properties.getCheckpoint().setSchemaVersion(2);
         checkpointService = new CheckpointService(store, objectMapper, properties);
         userRepo = Mockito.mock(UserAccountRepository.class);
         sessionRepo = Mockito.mock(ChatSessionRepository.class);
+    }
+
+    private String fp(String input) {
+        return CheckpointData.computeFingerprint(input);
     }
 
     // ────────── 保存/恢复 + 不重复步骤 ──────────
@@ -161,7 +165,7 @@ class CheckpointAwareAgentRuntimeTest {
         assertThat(companionCallCount.get()).isEqualTo(1);
 
         // checkpoint 应存在（保存了 Memory + Supervisor 完成后的状态）
-        var unfinished = checkpointService.loadUnfinished("sess-resume");
+        var unfinished = checkpointService.loadUnfinished("sess-resume", fp("input"));
         assertThat(unfinished).isPresent();
         assertThat(unfinished.get().stepNumber()).isEqualTo(2); // 2 steps completed
         assertThat(unfinished.get().blackboard().flags()).contains("MEMORY_LOADED", "INTENT_ROUTED");
@@ -191,7 +195,7 @@ class CheckpointAwareAgentRuntimeTest {
         assertThat(result.steps().get(2).agent()).isEqualTo(AgentName.COMPANION_AGENT);
 
         // checkpoint 应被删除
-        assertThat(checkpointService.loadUnfinished("sess-resume")).isEmpty();
+        assertThat(checkpointService.loadUnfinished("sess-resume", fp("input"))).isEmpty();
     }
 
     // ────────── 完成清理 ──────────
@@ -218,15 +222,15 @@ class CheckpointAwareAgentRuntimeTest {
 
         assertThat(result.steps()).hasSize(1);
         // checkpoint 应被删除
-        assertThat(checkpointService.loadUnfinished("sess-done")).isEmpty();
+        assertThat(checkpointService.loadUnfinished("sess-done", fp("input"))).isEmpty();
     }
 
     // ────────── 损坏数据 ──────────
 
     @Test
     void corruptedCheckpointShouldStartFreshWithoutError() {
-        // 存入损坏数据
-        store.save(checkpointService.indexKey("sess-corrupt"), "runCorrupt",
+        // 存入损坏数据（使用与运行时一致的指纹，以便能找到索引指向的损坏 checkpoint）
+        store.save(checkpointService.indexKey("sess-corrupt", fp("input")), "runCorrupt",
                 java.time.Duration.ofSeconds(3600));
         store.save(checkpointService.checkpointKey("sess-corrupt", "runCorrupt"),
                 "{{broken", java.time.Duration.ofSeconds(3600));
@@ -275,7 +279,7 @@ class CheckpointAwareAgentRuntimeTest {
         store.save(checkpointService.checkpointKey("sess-ver", "runV1"),
                 objectMapper.valueToTree(data).toString(),
                 java.time.Duration.ofSeconds(3600));
-        store.save(checkpointService.indexKey("sess-ver"), "runV1",
+        store.save(checkpointService.indexKey("sess-ver", fp("input")), "runV1",
                 java.time.Duration.ofSeconds(3600));
 
         var memoryCalls = new AtomicInteger(0);
@@ -397,7 +401,8 @@ class CheckpointAwareAgentRuntimeTest {
         wrapper.run(user, session, "input2", "input2");
 
         // 两次运行都成功完成，没有残留 checkpoint
-        assertThat(checkpointService.loadUnfinished("sess-concurrent")).isEmpty();
+        assertThat(checkpointService.loadUnfinished("sess-concurrent", fp("input1"))).isEmpty();
+        assertThat(checkpointService.loadUnfinished("sess-concurrent", fp("input2"))).isEmpty();
     }
 
     @Test
@@ -424,7 +429,7 @@ class CheckpointAwareAgentRuntimeTest {
 
         // checkpoint 应保留（Memory 步骤成功保存了）
         // 注意：索引可能被更新了
-        var unfinished = checkpointService.loadUnfinished("sess-fail");
+        var unfinished = checkpointService.loadUnfinished("sess-fail", fp("input"));
         assertThat(unfinished).isPresent();
         assertThat(unfinished.get().stepNumber()).isGreaterThanOrEqualTo(1);
     }
@@ -569,7 +574,7 @@ class CheckpointAwareAgentRuntimeTest {
         assertThat(result.steps().get(4).step()).isEqualTo(5);
 
         // checkpoint 删除
-        assertThat(checkpointService.loadUnfinished("sess-noDup")).isEmpty();
+        assertThat(checkpointService.loadUnfinished("sess-noDup", fp("我最近很焦虑"))).isEmpty();
     }
 
     // ────────── 用户/会话通过稳定 ID 恢复 ──────────

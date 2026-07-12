@@ -72,10 +72,12 @@ public class CheckpointAwareAgentRuntime implements AgentRuntime {
         }
 
         String sessionPublicId = session != null ? session.getPublicId() : null;
+        String inputFingerprint = CheckpointData.computeFingerprint(modelInput);
         String runId = generateRunId();
 
         // 尝试恢复 checkpoint
-        RestoreResult restoreResult = tryRestore(sessionPublicId, user, session, originalInput, modelInput);
+        RestoreResult restoreResult = tryRestore(sessionPublicId, user, session,
+                originalInput, modelInput, inputFingerprint);
         AgentContext context;
         if (restoreResult != null) {
             context = restoreResult.context();
@@ -86,7 +88,7 @@ public class CheckpointAwareAgentRuntime implements AgentRuntime {
             context = new AgentContext(user, session, originalInput, modelInput);
         }
 
-        return runWithContext(context, listener, runId, sessionPublicId);
+        return runWithContext(context, listener, runId, sessionPublicId, inputFingerprint);
     }
 
     @Override
@@ -95,14 +97,15 @@ public class CheckpointAwareAgentRuntime implements AgentRuntime {
             return delegate.run(context, listener);
         }
         String sessionPublicId = context.session() != null ? context.session().getPublicId() : null;
+        String inputFingerprint = CheckpointData.computeFingerprint(context.modelInput());
         String runId = generateRunId();
-        return runWithContext(context, listener, runId, sessionPublicId);
+        return runWithContext(context, listener, runId, sessionPublicId, inputFingerprint);
     }
 
     // ────────────── 核心执行 ──────────────
 
     private AgentRunResult runWithContext(AgentContext context, AgentStepListener listener,
-                                          String runId, String sessionPublicId) {
+                                          String runId, String sessionPublicId, String inputFingerprint) {
         String runtimeMode = delegate.mode().name();
 
         // 包装监听器：每个成功步骤后保存 checkpoint
@@ -130,7 +133,7 @@ public class CheckpointAwareAgentRuntime implements AgentRuntime {
 
         // 运行完成后删除 checkpoint（失败时抛异常不会到达这里，checkpoint 保留至 TTL）
         if (sessionPublicId != null) {
-            checkpointService.deleteCheckpoint(sessionPublicId, runId);
+            checkpointService.deleteCheckpoint(sessionPublicId, runId, inputFingerprint);
             log.debug("[checkpoint] completed and deleted: session={}, runId={}", sessionPublicId, runId);
         }
 
@@ -143,21 +146,48 @@ public class CheckpointAwareAgentRuntime implements AgentRuntime {
 
     private RestoreResult tryRestore(String sessionPublicId, UserAccount fallbackUser,
                                     ChatSession fallbackSession,
-                                    String originalInput, String modelInput) {
+                                    String originalInput, String modelInput, String inputFingerprint) {
         if (sessionPublicId == null || sessionPublicId.isBlank()) {
             return null;
         }
         try {
-            Optional<CheckpointData> opt = checkpointService.loadUnfinished(sessionPublicId);
+            Optional<CheckpointData> opt = checkpointService.loadUnfinished(sessionPublicId, inputFingerprint);
             if (opt.isEmpty()) {
                 return null;
             }
             CheckpointData cp = opt.get();
 
+            // 输入指纹校验：不匹配则清理残留 checkpoint 并从新运行
+            if (!inputFingerprint.equals(cp.inputFingerprint())) {
+                log.info("[checkpoint] inputFingerprint mismatch, starting fresh: session={}", sessionPublicId);
+                checkpointService.deleteCheckpoint(sessionPublicId, cp.runId(), inputFingerprint);
+                return null;
+            }
+
+            // 用户校验：不匹配则清理残留 checkpoint 并从新运行
+            if (fallbackUser == null || fallbackUser.getId() == null
+                    || fallbackUser.getId() != cp.userId()) {
+                log.info("[checkpoint] userId mismatch, starting fresh: session={}, stored={}, current={}",
+                        sessionPublicId, cp.userId(),
+                        fallbackUser != null ? fallbackUser.getId() : null);
+                checkpointService.deleteCheckpoint(sessionPublicId, cp.runId(), inputFingerprint);
+                return null;
+            }
+
+            // 运行时模式校验：不匹配则清理残留 checkpoint 并从新运行
+            String currentRuntimeMode = delegate.mode().name();
+            if (!currentRuntimeMode.equals(cp.runtimeMode())) {
+                log.info("[checkpoint] runtimeMode mismatch, starting fresh: session={}, stored={}, current={}",
+                        sessionPublicId, cp.runtimeMode(), currentRuntimeMode);
+                checkpointService.deleteCheckpoint(sessionPublicId, cp.runId(), inputFingerprint);
+                return null;
+            }
+
             // 通过稳定 ID 从 Repository 重新加载实体
             UserAccount restoredUser = userAccountRepository.findById(cp.userId()).orElse(null);
             if (restoredUser == null) {
                 log.info("[checkpoint] user not found, starting fresh: userId={}", cp.userId());
+                checkpointService.deleteCheckpoint(sessionPublicId, cp.runId(), inputFingerprint);
                 return null;
             }
             ChatSession restoredSession = chatSessionRepository
@@ -165,13 +195,12 @@ public class CheckpointAwareAgentRuntime implements AgentRuntime {
             if (restoredSession == null) {
                 log.info("[checkpoint] session not found, starting fresh: sessionPublicId={}",
                         cp.sessionPublicId());
+                checkpointService.deleteCheckpoint(sessionPublicId, cp.runId(), inputFingerprint);
                 return null;
             }
 
-            // 用重新加载的实体和 checkpoint 中的输入构建 context
-            AgentContext context = new AgentContext(restoredUser, restoredSession,
-                    cp.originalInput() != null ? cp.originalInput() : originalInput,
-                    cp.modelInput() != null ? cp.modelInput() : modelInput);
+            // 用当前请求的输入构建 context（不使用 checkpoint 中的输入，因为已不再存储明文）
+            AgentContext context = new AgentContext(restoredUser, restoredSession, originalInput, modelInput);
 
             // 恢复 Blackboard
             context.restoreBlackboard(cp.blackboard().toBlackboard(

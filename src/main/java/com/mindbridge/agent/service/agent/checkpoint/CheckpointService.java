@@ -20,8 +20,9 @@ import org.springframework.stereotype.Service;
  * <ul>
  *   <li>Checkpoint key: {@code mindbridge:checkpoint:{sessionPublicId}:{runId}}
  *       —— 包含 sessionId 和本轮唯一 runId，避免同一会话并发请求互相覆盖</li>
- *   <li>Index key: {@code mindbridge:checkpoint:index:{sessionPublicId}}
- *       —— 指向当前未完成 run 的 runId，用于快速查找</li>
+ *   <li>Index key: {@code mindbridge:checkpoint:index:{sessionPublicId}:{inputFingerprint}}
+ *       —— 指向当前未完成 run 的 runId，用于快速查找。
+ *       索引按 sessionId + 输入指纹隔离，避免同一会话不同输入的并发请求互相覆盖。</li>
  * </ul></p>
  *
  * <p><b>安全降级：</b>Redis 不可用、数据损坏、版本不兼容或 checkpoint 过期时，
@@ -63,10 +64,11 @@ public class CheckpointService {
                 log.debug("[checkpoint] save skipped: sessionPublicId is null");
                 return;
             }
+            String inputFingerprint = data.inputFingerprint();
             String json = objectMapper.writeValueAsString(data);
             String key = checkpointKey(sessionPublicId, runId);
             store.save(key, json, ttl());
-            store.save(indexKey(sessionPublicId), runId, ttl());
+            store.save(indexKey(sessionPublicId, inputFingerprint), runId, ttl());
             log.debug("[checkpoint] saved: session={}, runId={}, step={}",
                     sessionPublicId, runId, data.stepNumber());
         } catch (Exception e) {
@@ -79,19 +81,22 @@ public class CheckpointService {
     /**
      * 查找并加载当前未完成的 checkpoint。
      *
-     * <p>通过 index key 找到当前未完成 run 的 runId，再加载对应的 checkpoint 数据。
-     * 仅返回兼容版本且状态为 RUNNING 的 checkpoint。</p>
+     * <p>通过 index key（按 sessionId + 输入指纹隔离）找到当前未完成 run 的 runId，
+     * 再加载对应的 checkpoint 数据。仅返回兼容版本且状态为 RUNNING 的 checkpoint。</p>
      */
-    public Optional<CheckpointData> loadUnfinished(String sessionPublicId) {
+    public Optional<CheckpointData> loadUnfinished(String sessionPublicId, String inputFingerprint) {
         try {
-            String runId = store.load(indexKey(sessionPublicId));
+            if (inputFingerprint == null || inputFingerprint.isBlank()) {
+                return Optional.empty();
+            }
+            String runId = store.load(indexKey(sessionPublicId, inputFingerprint));
             if (runId == null || runId.isBlank()) {
                 return Optional.empty();
             }
             String json = store.load(checkpointKey(sessionPublicId, runId));
             if (json == null || json.isBlank()) {
                 // checkpoint 已过期或被删除，清理残留索引
-                store.delete(indexKey(sessionPublicId));
+                store.delete(indexKey(sessionPublicId, inputFingerprint));
                 return Optional.empty();
             }
             CheckpointData data = objectMapper.readValue(json, CheckpointData.class);
@@ -121,12 +126,14 @@ public class CheckpointService {
      *
      * <p>仅当索引指向当前 runId 时才删除索引，避免删除并发运行的其他 run 的索引。</p>
      */
-    public void deleteCheckpoint(String sessionPublicId, String runId) {
+    public void deleteCheckpoint(String sessionPublicId, String runId, String inputFingerprint) {
         try {
             store.delete(checkpointKey(sessionPublicId, runId));
-            String currentIndexed = store.load(indexKey(sessionPublicId));
-            if (runId.equals(currentIndexed)) {
-                store.delete(indexKey(sessionPublicId));
+            if (inputFingerprint != null && !inputFingerprint.isBlank()) {
+                String currentIndexed = store.load(indexKey(sessionPublicId, inputFingerprint));
+                if (runId.equals(currentIndexed)) {
+                    store.delete(indexKey(sessionPublicId, inputFingerprint));
+                }
             }
         } catch (Exception e) {
             log.debug("[checkpoint] delete failed: session={}, runId={}, error={}",
@@ -140,8 +147,8 @@ public class CheckpointService {
         return KEY_PREFIX + normalizeSegment(sessionPublicId) + ":" + normalizeSegment(runId);
     }
 
-    String indexKey(String sessionPublicId) {
-        return INDEX_PREFIX + normalizeSegment(sessionPublicId);
+    String indexKey(String sessionPublicId, String inputFingerprint) {
+        return INDEX_PREFIX + normalizeSegment(sessionPublicId) + ":" + normalizeSegment(inputFingerprint);
     }
 
     /**

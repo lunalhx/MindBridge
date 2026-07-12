@@ -37,14 +37,21 @@ class CheckpointServiceTest {
     private CheckpointService service;
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
 
+    /** buildContextAfterMemoryAndSupervisor() 使用的 modelInput，用于计算指纹。 */
+    private static final String MODEL_INPUT = "我最近很焦虑";
+
     @BeforeEach
     void setUp() {
         store = new InMemoryCheckpointStore();
         properties = new MindBridgeProperties();
         properties.getCheckpoint().setEnabled(true);
         properties.getCheckpoint().setTtlSeconds(3600);
-        properties.getCheckpoint().setSchemaVersion(1);
+        properties.getCheckpoint().setSchemaVersion(2);
         service = new CheckpointService(store, objectMapper, properties);
+    }
+
+    private String fp() {
+        return CheckpointData.computeFingerprint(MODEL_INPUT);
     }
 
     // ────────── 保存/恢复 ──────────
@@ -55,16 +62,17 @@ class CheckpointServiceTest {
         String runId = "run123";
         service.saveCheckpoint(context, runId, "SEQUENTIAL", 0);
 
-        Optional<CheckpointData> loaded = service.loadUnfinished("sess-1");
+        Optional<CheckpointData> loaded = service.loadUnfinished("sess-1", fp());
 
         assertThat(loaded).isPresent();
         CheckpointData data = loaded.get();
         assertThat(data.runId()).isEqualTo(runId);
         assertThat(data.sessionPublicId()).isEqualTo("sess-1");
         assertThat(data.runtimeMode()).isEqualTo("SEQUENTIAL");
-        assertThat(data.schemaVersion()).isEqualTo(1);
+        assertThat(data.schemaVersion()).isEqualTo(2);
         assertThat(data.status()).isEqualTo("RUNNING");
         assertThat(data.stepNumber()).isEqualTo(2);
+        assertThat(data.inputFingerprint()).isEqualTo(fp());
 
         // Blackboard flags 恢复
         assertThat(data.blackboard().flags()).contains("MEMORY_LOADED", "INTENT_ROUTED");
@@ -88,7 +96,7 @@ class CheckpointServiceTest {
 
     @Test
     void loadShouldReturnEmptyWhenNoCheckpoint() {
-        assertThat(service.loadUnfinished("sess-unknown")).isEmpty();
+        assertThat(service.loadUnfinished("sess-unknown", fp())).isEmpty();
     }
 
     // ────────── 完成清理 ──────────
@@ -101,14 +109,14 @@ class CheckpointServiceTest {
         // checkpoint key 和 index key 都存在
         assertThat(store.keys()).contains(
                 service.checkpointKey("sess-1", "run456"),
-                service.indexKey("sess-1"));
+                service.indexKey("sess-1", fp()));
 
-        service.deleteCheckpoint("sess-1", "run456");
+        service.deleteCheckpoint("sess-1", "run456", fp());
 
         // 两者都应被删除
         assertThat(store.keys()).doesNotContain(
                 service.checkpointKey("sess-1", "run456"),
-                service.indexKey("sess-1"));
+                service.indexKey("sess-1", fp()));
     }
 
     @Test
@@ -119,14 +127,14 @@ class CheckpointServiceTest {
         service.saveCheckpoint(buildContextAfterMemoryAndSupervisor(), "runB", "SEQUENTIAL", 0);
 
         // 索引现在指向 runB
-        assertThat(store.load(service.indexKey("sess-1"))).isEqualTo("runB");
+        assertThat(store.load(service.indexKey("sess-1", fp()))).isEqualTo("runB");
 
         // 删除 runA：只应删除 runA 的数据，不应删除索引（因为索引指向 runB）
-        service.deleteCheckpoint("sess-1", "runA");
+        service.deleteCheckpoint("sess-1", "runA", fp());
 
         assertThat(store.keys()).doesNotContain(service.checkpointKey("sess-1", "runA"));
         // 索引仍然指向 runB
-        assertThat(store.load(service.indexKey("sess-1"))).isEqualTo("runB");
+        assertThat(store.load(service.indexKey("sess-1", fp()))).isEqualTo("runB");
         // runB 的数据仍然存在
         assertThat(store.keys()).contains(service.checkpointKey("sess-1", "runB"));
     }
@@ -144,10 +152,10 @@ class CheckpointServiceTest {
         store.save(service.checkpointKey("sess-1", "run789"),
                 objectMapper.valueToTree(data).toString(),
                 Duration.ofSeconds(3600));
-        store.save(service.indexKey("sess-1"), "run789", Duration.ofSeconds(3600));
+        store.save(service.indexKey("sess-1", fp()), "run789", Duration.ofSeconds(3600));
 
         // 当前期望 schemaVersion=2，不兼容
-        Optional<CheckpointData> loaded = service.loadUnfinished("sess-1");
+        Optional<CheckpointData> loaded = service.loadUnfinished("sess-1", fp());
         assertThat(loaded).isEmpty();
     }
 
@@ -157,9 +165,9 @@ class CheckpointServiceTest {
     void loadShouldReturnEmptyWhenDataIsCorrupted() {
         // 存入非法 JSON
         store.save(service.checkpointKey("sess-1", "runBroken"), "{{corrupted json", Duration.ofSeconds(3600));
-        store.save(service.indexKey("sess-1"), "runBroken", Duration.ofSeconds(3600));
+        store.save(service.indexKey("sess-1", fp()), "runBroken", Duration.ofSeconds(3600));
 
-        Optional<CheckpointData> loaded = service.loadUnfinished("sess-1");
+        Optional<CheckpointData> loaded = service.loadUnfinished("sess-1", fp());
         assertThat(loaded).isEmpty();
     }
 
@@ -173,7 +181,7 @@ class CheckpointServiceTest {
         // 手动让 key 过期
         store.expireKey(service.checkpointKey("sess-1", "runExpired"));
 
-        Optional<CheckpointData> loaded = service.loadUnfinished("sess-1");
+        Optional<CheckpointData> loaded = service.loadUnfinished("sess-1", fp());
         // checkpoint 已过期，但索引可能还在；应安全返回 empty
         assertThat(loaded).isEmpty();
     }
@@ -192,7 +200,7 @@ class CheckpointServiceTest {
     void loadShouldReturnEmptyWhenRedisFails() {
         store.setFailure(new InMemoryCheckpointStore.RuntimeRuntimeException("Redis down"));
 
-        assertThat(service.loadUnfinished("sess-1")).isEmpty();
+        assertThat(service.loadUnfinished("sess-1", fp())).isEmpty();
     }
 
     @Test
@@ -200,7 +208,7 @@ class CheckpointServiceTest {
         store.setFailure(new InMemoryCheckpointStore.RuntimeRuntimeException("Redis down"));
 
         // 不应抛异常
-        service.deleteCheckpoint("sess-1", "runFail");
+        service.deleteCheckpoint("sess-1", "runFail", fp());
     }
 
     // ────────── 并发 runId 隔离 ──────────
@@ -221,7 +229,7 @@ class CheckpointServiceTest {
         service.saveCheckpoint(contextB, runB, "SEQUENTIAL", 0);
 
         // 索引指向最新的 runB
-        assertThat(store.load(service.indexKey("sess-1"))).isEqualTo(runB);
+        assertThat(store.load(service.indexKey("sess-1", fp()))).isEqualTo(runB);
 
         // runA 的 checkpoint 数据仍然完整存在
         String jsonA = store.load(service.checkpointKey("sess-1", runA));
@@ -247,11 +255,11 @@ class CheckpointServiceTest {
     }
 
     @Test
-    void indexKeyShouldBeScopedToSession() {
-        assertThat(service.indexKey("sess-1"))
-                .isEqualTo("mindbridge:checkpoint:index:sess-1");
-        assertThat(service.indexKey("sess-2"))
-                .isEqualTo("mindbridge:checkpoint:index:sess-2");
+    void indexKeyShouldBeScopedToSessionAndFingerprint() {
+        assertThat(service.indexKey("sess-1", fp()))
+                .isEqualTo("mindbridge:checkpoint:index:sess-1:" + fp());
+        assertThat(service.indexKey("sess-2", fp()))
+                .isEqualTo("mindbridge:checkpoint:index:sess-2:" + fp());
     }
 
     @Test
@@ -267,20 +275,20 @@ class CheckpointServiceTest {
     void loadShouldReturnEmptyWhenStatusIsNotRunning() {
         AgentContext context = buildContextAfterMemoryAndSupervisor();
         // 构造一个 COMPLETED 状态的 checkpoint
-        CheckpointData data = CheckpointData.from(context, "runDone", "SEQUENTIAL", 1, 0, objectMapper);
+        CheckpointData data = CheckpointData.from(context, "runDone", "SEQUENTIAL", 2, 0, objectMapper);
         CheckpointData completed = new CheckpointData(
                 data.schemaVersion(), data.runtimeMode(), data.runId(),
                 data.userId(), data.sessionId(), data.sessionPublicId(),
-                data.originalInput(), data.modelInput(), data.stepNumber(),
+                data.inputFingerprint(), data.stepNumber(),
                 data.round(), data.createdAt(), CheckpointData.STATUS_COMPLETED,
                 data.blackboard(), data.steps(), data.previousHistory(),
                 data.modelHistory(), data.memoryBrief(), data.knowledgeQuery(), data.riskLevel()
         );
         store.save(service.checkpointKey("sess-1", "runDone"),
                 objectMapper.valueToTree(completed).toString(), Duration.ofSeconds(3600));
-        store.save(service.indexKey("sess-1"), "runDone", Duration.ofSeconds(3600));
+        store.save(service.indexKey("sess-1", fp()), "runDone", Duration.ofSeconds(3600));
 
-        assertThat(service.loadUnfinished("sess-1")).isEmpty();
+        assertThat(service.loadUnfinished("sess-1", fp())).isEmpty();
     }
 
     // ────────── 默认配置 ──────────
@@ -296,8 +304,8 @@ class CheckpointServiceTest {
     }
 
     @Test
-    void defaultSchemaVersionShouldBe1() {
-        assertThat(new MindBridgeProperties().getCheckpoint().getSchemaVersion()).isEqualTo(1);
+    void defaultSchemaVersionShouldBe2() {
+        assertThat(new MindBridgeProperties().getCheckpoint().getSchemaVersion()).isEqualTo(2);
     }
 
     // ────────── Helpers ──────────
@@ -311,13 +319,13 @@ class CheckpointServiceTest {
         session.setPublicId("sess-1");
         session.setTitle("Test Session");
 
-        AgentContext context = new AgentContext(user, session, "我最近很焦虑", "我最近很焦虑");
+        AgentContext context = new AgentContext(user, session, MODEL_INPUT, MODEL_INPUT);
 
         // 模拟 MemoryAgent 执行
-        context.setPreviousHistory(List.of(AiMessage.user("我最近很焦虑")));
+        context.setPreviousHistory(List.of(AiMessage.user(MODEL_INPUT)));
         context.setModelHistory(List.of(
                 AiMessage.assistant("你好"),
-                AiMessage.user("我最近很焦虑")));
+                AiMessage.user(MODEL_INPUT)));
         context.setMemoryBrief("用户画像：焦虑");
         context.markMemoryLoaded();
         context.addStep(AgentStep.of(1, AgentName.MEMORY_AGENT,

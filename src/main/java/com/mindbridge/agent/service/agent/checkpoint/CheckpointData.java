@@ -28,7 +28,7 @@ import java.util.List;
  *   <li>{@code runtimeMode} —— 记录产生此 checkpoint 的运行时模式</li>
  *   <li>{@code runId} —— 本轮唯一运行标识，避免同一会话并发请求互相覆盖</li>
  *   <li>{@code userId / sessionId / sessionPublicId} —— 稳定 ID，用于恢复时重新加载实体</li>
- *   <li>{@code originalInput / modelInput} —— 原始输入和脱敏后输入</li>
+ *   <li>{@code inputFingerprint} —— 脱敏后输入的 SHA-256 指纹（不存储明文输入）</li>
  *   <li>{@code stepNumber} —— 上次成功完成的步骤号</li>
  *   <li>{@code round} —— 当前轮次（EVENT_DRIVEN 用）</li>
  *   <li>{@code createdAt} —— checkpoint 创建时间</li>
@@ -46,8 +46,7 @@ public record CheckpointData(
         long userId,
         long sessionId,
         String sessionPublicId,
-        String originalInput,
-        String modelInput,
+        String inputFingerprint,
         int stepNumber,
         int round,
         Instant createdAt,
@@ -63,6 +62,25 @@ public record CheckpointData(
     public static final String STATUS_RUNNING = "RUNNING";
     public static final String STATUS_COMPLETED = "COMPLETED";
 
+    /**
+     * 计算输入指纹（SHA-256 of sanitized model input）。
+     *
+     * <p>用于在不存储明文输入的前提下，校验恢复时的输入是否与产生 checkpoint 时一致，
+     * 避免同一会话不同输入的并发请求互相覆盖。</p>
+     */
+    public static String computeFingerprint(String modelInput) {
+        if (modelInput == null || modelInput.isEmpty()) return "";
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] hash = md.digest(modelInput.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder();
+            for (byte b : hash) hex.append(String.format("%02x", b));
+            return hex.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new RuntimeException("SHA-256 not available", e);
+        }
+    }
+
     /** 从 AgentContext 构建一个 RUNNING 状态的 checkpoint。 */
     public static CheckpointData from(AgentContext context, String runId, String runtimeMode,
                                       int schemaVersion, int round, ObjectMapper mapper) {
@@ -74,8 +92,7 @@ public record CheckpointData(
                 context.user() != null && context.user().getId() != null ? context.user().getId() : 0L,
                 context.session() != null && context.session().getId() != null ? context.session().getId() : 0L,
                 context.session() != null ? context.session().getPublicId() : null,
-                context.originalInput(),
-                context.modelInput(),
+                computeFingerprint(context.modelInput()),
                 context.steps().size(),
                 round,
                 Instant.now(),
