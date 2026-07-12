@@ -8,8 +8,11 @@ import com.mindbridge.agent.service.agent.blackboard.AgentArtifact;
 import com.mindbridge.agent.service.agent.blackboard.AgentBlackboard;
 import com.mindbridge.agent.service.agent.blackboard.AgentFlag;
 import com.mindbridge.agent.service.agent.registry.AgentCapability;
+import com.mindbridge.agent.service.skill.Skill;
+import com.mindbridge.agent.service.skill.SkillRegistry;
 import java.util.ArrayList;
 import java.util.List;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
@@ -21,9 +24,17 @@ import org.springframework.stereotype.Component;
 public class CounselorAgent implements MindBridgeAgent {
 
     private final AiClient aiClient;
+    private final SkillRegistry skillRegistry;
 
-    public CounselorAgent(AiClient aiClient) {
+    @Autowired
+    public CounselorAgent(AiClient aiClient, SkillRegistry skillRegistry) {
         this.aiClient = aiClient;
+        this.skillRegistry = skillRegistry;
+    }
+
+    /** 测试兼容构造：不注入 SkillRegistry，技能注入跳过。 */
+    public CounselorAgent(AiClient aiClient) {
+        this(aiClient, null);
     }
 
     @Override
@@ -115,6 +126,15 @@ public class CounselorAgent implements MindBridgeAgent {
                 context.riskLevel(),
                 knowledgeContext,
                 context.user().getDisplayName()));
+        // 注入选中技能（安全规则优先，技能为附加指导）
+        if (skillRegistry != null) {
+            List<Skill> selected = skillRegistry.selectBy(
+                    context.intent(), context.riskLevel(), context.modelInput());
+            AiMessage skillMsg = PromptTemplates.injectSkills(selected);
+            if (skillMsg != null) {
+                messages.add(skillMsg);
+            }
+        }
         messages.add(AiMessage.system("""
                 当前由 CounselorAgent 负责回复。
                 记忆摘要：

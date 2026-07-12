@@ -2,7 +2,9 @@ package com.mindbridge.agent.service.ai;
 
 import com.mindbridge.agent.domain.IntentType;
 import com.mindbridge.agent.domain.RiskLevel;
+import com.mindbridge.agent.service.skill.Skill;
 import java.util.List;
+import java.util.StringJoiner;
 
 /**
  * 模型提示词模板集中管理。
@@ -124,5 +126,29 @@ public final class PromptTemplates {
                 .skip(Math.max(0, history.size() - 20))
                 .map(message -> message.role() + ": " + message.content())
                 .toList());
+    }
+
+    /**
+     * 将选中的技能内容注入为附加指导消息。
+     *
+     * <p>技能内容是附加指导，不能覆盖系统安全规则。
+     * 风险规则和禁止诊断、禁止泄漏后台标签的指令保持最高优先级。</p>
+     *
+     * <p>技能内容以"以下为辅助技能指导，请遵循系统安全规则优先"前缀注入，
+     * 确保模型理解技能是辅助而非覆盖。</p>
+     *
+     * @param selectedSkills 选中的技能列表（可为空）
+     * @return 包含技能内容的 AiMessage，无匹配时返回 null
+     */
+    public static AiMessage injectSkills(List<Skill> selectedSkills) {
+        if (selectedSkills == null || selectedSkills.isEmpty()) {
+            return null;
+        }
+        StringJoiner joiner = new StringJoiner("\n\n");
+        joiner.add("以下为辅助技能指导，请在遵守上述系统安全规则的前提下参考使用：");
+        for (Skill skill : selectedSkills) {
+            joiner.add("## 技能：" + skill.name() + "\n" + skill.content());
+        }
+        return AiMessage.system(joiner.toString());
     }
 }
